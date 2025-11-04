@@ -1,5 +1,0 @@
-
-Division,BOL#,Master BOL#,PO Num,Wave#,Wave Creation Date,Wave Type,# of Pk Tks,Remaining Pk Tks,Pick#,Latest Tote Time,Order Type,Customer,Cust Name,Shipper,Store,Center,TTL QTY,TTL Amt,Packed %,Palletized %,Label Printed %,Carton Confirmed,Accusort,SortDirector,Pallet Location,Total Cubic,Est. Cartons,Est. Pallet,Pick Proc Date,Start Date,Cancel Date,Router,Route Date,Scheduled Date,Ready Date,Ready Time,Author#,PT STATUS
-APP,BOL-001,,PO-1001,0,2025-11-01,REGULAR,12,0,PICK-9001,,REG,100001,Target,FedEx,,DC1,1200,14500,1,1,1,,,,SHIP-A1,12,120,5,2025-11-02,2025-11-05,2025-11-10,Hector,2025-11-04,2025-11-05,,READY
-APP,BOL-002,,PO-1002,0,2025-11-01,REGULAR,10,0,PICK-9002,,REG,100002,Walmart,UPS,,DC1,980,12600,1,1,1,,,,SHIP-B2,11,98,4,2025-11-02,2025-11-05,2025-11-10,Hector,2025-11-04,2025-11-05,,READY
-APP,BOL-003,,PO-1003,0,2025-11-01,REGULAR,15,0,PICK-9003,,REG,100003,Amazon,DHL,,DC2,1500,18000,1,1,1,,,,SHIP-C1,15,150,6,2025-11-02,2025-11-06,2025-11-11,Hector,2025-11-05,2025-11-06,,READY
