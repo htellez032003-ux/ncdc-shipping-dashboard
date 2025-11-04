@@ -1,3 +1,0 @@
-body { font-family: Arial, sans-serif; margin: 0; background: var(--bg); color: var(--text); }
-:root { --bg: #f7f9fc; --text: #222; }
-[data-theme="dark"] { --bg: #111; --text: #eee; }
