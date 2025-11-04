@@ -1,31 +1,204 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NCDC Shipping Dashboard</title>
-    <link rel="stylesheet" href="styles.css">
-    <script type="module" src="script.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>NCDC Shipping Dashboard</title>
+  <!-- Light warehouse style -->
+  <link rel="stylesheet" href="styles.css" />
+  <!-- CSV parser & charts (CDN, no backend needed) -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <!-- Our app -->
+  <script type="module" src="script.js" defer></script>
 </head>
 <body>
-    <div id="login-screen">
-        <h1>NCDC Shipping Dashboard</h1>
-        <p>Admin Login</p>
-        <button id="login-btn">Log In</button>
+  <!-- Login Screen -->
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      <h1>NCDC Shipping Dashboard</h1>
+      <p class="muted">Sign in to continue</p>
+      <label class="block-label">Username</label>
+      <input id="login-username" class="input" placeholder="owner" />
+      <label class="block-label">Password</label>
+      <input id="login-password" class="input" type="password" placeholder="owner123" />
+      <button id="login-btn" class="btn primary full">Log In</button>
+      <p id="login-error" class="error-text hidden">Invalid credentials</p>
+      <p class="muted small mt-2">
+        Default owner: <code>owner / owner123</code>
+      </p>
     </div>
+  </div>
 
-    <div id="dashboard" class="hidden">
-        <header><h2>Welcome, Admin</h2></header>
-        <main id="app">
-            <section id="orders-section">
-                <h3>Active Orders</h3>
-                <div id="orders-container"></div>
-            </section>
-            <section id="summary">
-                <h3>Summary</h3>
-                <div id="summary-content"></div>
-            </section>
-        </main>
+  <!-- Main App -->
+  <div id="app-shell" class="app-shell hidden">
+    <header class="topbar">
+      <div class="topbar-left">
+        <h2>NCDC Shipping Dashboard</h2>
+        <span id="offline-indicator" class="badge info">Offline Mode</span>
+      </div>
+      <div class="topbar-right">
+        <span id="current-role" class="badge">role</span>
+        <span id="current-user" class="muted"></span>
+        <button id="logout-btn" class="btn small">Log Out</button>
+      </div>
+    </header>
+
+    <div class="body-layout">
+      <!-- Sidebar -->
+      <nav class="sidebar">
+        <button class="tab-btn active" data-tab="dashboard-tab">Dashboard</button>
+        <button class="tab-btn" data-tab="routers-tab">Routers</button>
+        <button class="tab-btn" data-tab="dock-tab">Dock</button>
+        <button class="tab-btn" data-tab="truckloads-tab">Truckloads</button>
+        <button class="tab-btn" data-tab="upload-tab">Upload Orders</button>
+        <button class="tab-btn" data-tab="settings-tab">Settings</button>
+      </nav>
+
+      <!-- Content -->
+      <main class="content">
+        <!-- DASHBOARD -->
+        <section id="dashboard-tab" class="tab-panel active">
+          <h3>Operations Overview</h3>
+          <div class="cards-row" id="summary-cards">
+            <!-- cards injected -->
+          </div>
+          <div class="flex-row">
+            <div class="panel flex-2">
+              <div class="panel-header">
+                <h4>Today’s Schedule</h4>
+                <div>
+                  <button class="btn tiny" data-dashboard-range="today">Today</button>
+                  <button class="btn tiny" data-dashboard-range="tomorrow">Tomorrow</button>
+                  <button class="btn tiny" data-dashboard-range="week">This Week</button>
+                </div>
+              </div>
+              <div id="dashboard-schedule" class="scroll-y small"></div>
+            </div>
+            <div class="panel flex-1">
+              <div class="panel-header">
+                <h4>Capacity by Window</h4>
+              </div>
+              <canvas id="capacityChart" height="180"></canvas>
+            </div>
+          </div>
+
+          <div class="panel mt-2">
+            <div class="panel-header">
+              <h4>Calendar View</h4>
+            </div>
+            <div id="calendar-container" class="calendar-container">
+              <!-- calendar injected here -->
+            </div>
+          </div>
+        </section>
+
+        <!-- ROUTERS -->
+        <section id="routers-tab" class="tab-panel">
+          <h3>Routers View</h3>
+          <p class="muted small mb-1">Select orders, set pickup type & ship window, build truckloads.</p>
+          <div class="panel">
+            <div class="panel-header">
+              <h4>Order Book</h4>
+              <div class="flex-row gap">
+                <input id="router-search" class="input small" placeholder="Search BOL / customer / carrier" />
+                <select id="router-filter-window" class="input small">
+                  <option value="">All Windows</option>
+                </select>
+                <button id="router-build-tl" class="btn small primary">Build Truckload from Selected</button>
+              </div>
+            </div>
+            <div class="table-wrap" id="router-orders-table">
+              <!-- table injected -->
+            </div>
+          </div>
+        </section>
+
+        <!-- DOCK -->
+        <section id="dock-tab" class="tab-panel">
+          <h3>Dock Worker View</h3>
+          <p class="muted small mb-1">Update pallets, staging location, arrival/departure.</p>
+          <div class="panel">
+            <div class="panel-header">
+              <h4>Orders to Stage / Load</h4>
+            </div>
+            <div id="dock-orders" class="table-wrap">
+              <!-- dock orders -->
+            </div>
+          </div>
+        </section>
+
+        <!-- TRUCKLOADS -->
+        <section id="truckloads-tab" class="tab-panel">
+          <h3>Truckloads</h3>
+          <div class="panel">
+            <div class="panel-header">
+              <h4>All Loads</h4>
+            </div>
+            <div id="truckloads-list" class="table-wrap">
+              <!-- loads go here -->
+            </div>
+          </div>
+        </section>
+
+        <!-- UPLOAD -->
+        <section id="upload-tab" class="tab-panel">
+          <h3>Upload Order Book (CSV)</h3>
+          <div class="panel">
+            <p class="muted small mb-1">Upload your raw open order book. Large files are parsed in the browser.</p>
+            <input type="file" id="csv-file" accept=".csv" />
+            <button id="csv-upload-btn" class="btn primary small mt-1">Upload & Parse</button>
+            <p id="csv-status" class="muted small mt-1"></p>
+            <div id="upload-preview" class="table-wrap small mt-2"></div>
+          </div>
+        </section>
+
+        <!-- SETTINGS -->
+        <section id="settings-tab" class="tab-panel">
+          <h3>Settings (Owner / Admin)</h3>
+          <div class="flex-row gap">
+            <div class="panel flex-1">
+              <div class="panel-header">
+                <h4>User Management</h4>
+              </div>
+              <table class="table small" id="users-table">
+                <thead>
+                  <tr>
+                    <th>User</th>
+                    <th>Role</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="users-tbody">
+                  <!-- users -->
+                </tbody>
+              </table>
+              <div class="mt-1">
+                <h5>Add User</h5>
+                <input id="new-user-name" class="input small" placeholder="username" />
+                <input id="new-user-pass" class="input small" placeholder="password" />
+                <select id="new-user-role" class="input small">
+                  <option value="router">Router</option>
+                  <option value="dock">Dock Worker</option>
+                  <option value="admin">Admin</option>
+                </select>
+                <button id="add-user-btn" class="btn small mt-1">Add User</button>
+              </div>
+            </div>
+            <div class="panel flex-1">
+              <div class="panel-header">
+                <h4>Ship Windows Capacity</h4>
+              </div>
+              <div id="ship-window-capacities" class="table-wrap small">
+                <!-- capacity table -->
+              </div>
+              <button id="save-capacities-btn" class="btn small primary mt-1">Save Capacities</button>
+              <p id="settings-msg" class="muted small mt-1"></p>
+            </div>
+          </div>
+        </section>
+      </main>
     </div>
+  </div>
 </body>
 </html>
