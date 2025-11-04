@@ -1,0 +1,1 @@
+This is the offline-ready NCDC Shipping Dashboard for GitHub Pages deployment.
