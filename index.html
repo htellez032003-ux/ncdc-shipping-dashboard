@@ -2,34 +2,264 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NCDC Shipping Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div id="login-screen" class="login-screen">
-    <div class="login-card">
-      <h1 class="app-title">NCDC Shipping Dashboard</h1>
-      <p>Owner / Admin sign in</p>
-      <label>Email</label>
-      <input id="login-email" type="email" class="input" value="htellez032003@gmail.com" />
-      <label>Password</label>
-      <input id="login-password" type="password" class="input" value="Ltapparel040523" />
-      <button id="login-button" class="primary-btn">Log In</button>
-      <p id="login-error" class="error-text" style="display:none;">Invalid credentials.</p>
+  <!-- Sidebar -->
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar__header">
+      <div class="brand">NCDC</div>
+      <div class="brand-sub">Shipping Dashboard</div>
     </div>
-  </div>
-  <div id="app-shell" class="app-shell hidden">
-    <aside class="sidebar">
-      <h2>NCDC</h2>
-      <p>Shipping Dashboard</p>
-      <button id="logout-button" class="secondary-btn">Log out</button>
-    </aside>
-    <main class="main">
-      <header><h1>Orders</h1></header>
-      <section id="orders-view"><p>Welcome to the dashboard!</p></section>
-    </main>
-  </div>
+    <nav class="sidebar__nav" id="navTabs" aria-label="Main navigation">
+      <button class="nav-btn active" data-target="ordersView">Orders</button>
+      <button class="nav-btn" data-target="dockView">Dock</button>
+      <button class="nav-btn" data-target="truckloadsView">Truckloads</button>
+      <button class="nav-btn" data-target="metricsView">Metrics</button>
+      <button class="nav-btn" data-target="settingsView">Settings</button>
+    </nav>
+    <div class="sidebar__footer">
+      <button id="logoutBtn" class="logout-btn">Log out</button>
+    </div>
+  </aside>
+
+  <!-- Main content -->
+  <main id="main" class="main">
+    <!-- Login overlay -->
+    <div id="loginScreen" class="login-screen">
+      <div class="login-card">
+        <h1 class="login-title">NCDC Shipping Dashboard</h1>
+        <p class="login-sub">Owner / Admin sign in</p>
+        <label class="field">
+          <span>Email</span>
+          <!-- your fixed email -->
+          <input id="loginEmail" type="email" value="htellez032003@gmail.com" autocomplete="username" />
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <!-- your fixed password -->
+          <input id="loginPassword" type="password" value="Ltapparel040523" autocomplete="current-password" />
+        </label>
+        <button id="loginBtn" class="primary-btn">Log In</button>
+        <p class="login-hint">
+          (Use <strong>htellez032003@gmail.com</strong> / <strong>Ltapparel040523</strong>)
+        </p>
+        <p id="loginError" class="error-text" aria-live="polite"></p>
+      </div>
+    </div>
+
+    <!-- Content area -->
+    <div class="content" id="contentArea">
+      <!-- ORDERS VIEW -->
+      <section id="ordersView" class="view active" aria-label="Orders view">
+        <h2 class="view-title">Orders</h2>
+        <p class="view-sub">Upload CSV and manage orders.</p>
+
+        <div class="card">
+          <h3 class="card-title">Upload order book (CSV)</h3>
+          <p class="card-text">
+            Pick your open-order CSV (up to 250k+ cells is fine for now, but large files will feel slower in the browser).
+          </p>
+          <input type="file" id="ordersCsvInput" accept=".csv" />
+          <p class="hint">Tip: we auto-map your sample headers like <code>Division</code>, <code>BOL#</code>, <code>PO Num</code>, <code>Start Date</code>, <code>Cancel Date</code>, <code>Shipper</code>, etc.</p>
+          <p id="ordersUploadStatus" class="upload-status"></p>
+        </div>
+
+        <div class="card">
+          <div class="card-header-inline">
+            <h3 class="card-title">Order book</h3>
+            <div class="inline-actions">
+              <button id="refreshSampleBtn" class="ghost-btn">Load sample data</button>
+              <input id="ordersSearch" type="text" class="search-input" placeholder="Search BOL, PO, customer..." />
+            </div>
+          </div>
+          <div class="table-wrapper">
+            <table class="simple-table" id="ordersTable">
+              <thead>
+                <tr>
+                  <th>BOL#</th>
+                  <th>PO Num</th>
+                  <th>Customer</th>
+                  <th>Shipper</th>
+                  <th>Start Date</th>
+                  <th>Cancel Date</th>
+                  <th>TTL QTY</th>
+                  <th>TTL Amt</th>
+                  <th>Router Comment</th>
+                  <th>Assign</th>
+                </tr>
+              </thead>
+              <tbody id="ordersTableBody">
+                <!-- populated by JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- DOCK VIEW -->
+      <section id="dockView" class="view" aria-label="Dock view">
+        <h2 class="view-title">Dock</h2>
+        <p class="view-sub">See what’s Available to Stage, In Staging, and Fully Staged.</p>
+
+        <div class="three-col">
+          <div class="card col">
+            <h3 class="card-title">Available to Stage</h3>
+            <div id="dockAvailable" class="dock-list"></div>
+          </div>
+          <div class="card col">
+            <h3 class="card-title">Staging in Progress</h3>
+            <div id="dockStaging" class="dock-list"></div>
+          </div>
+          <div class="card col">
+            <h3 class="card-title">Fully Staged</h3>
+            <div id="dockStaged" class="dock-list"></div>
+          </div>
+        </div>
+
+        <div class="card mt">
+          <h3 class="card-title">Dock totals</h3>
+          <div class="pill-row" id="dockTotals">
+            <!-- totals drawn by JS -->
+          </div>
+        </div>
+      </section>
+
+      <!-- TRUCKLOADS VIEW -->
+      <section id="truckloadsView" class="view" aria-label="Truckloads view">
+        <h2 class="view-title">Truckloads</h2>
+        <p class="view-sub">Build loads from order book. Routers can override the auto ID with a real Load ID.</p>
+
+        <div class="flex-row">
+          <!-- builder -->
+          <div class="card flex-1">
+            <h3 class="card-title">Build a truckload</h3>
+            <label class="field">
+              <span>Load ID (auto or manual)</span>
+              <input id="tlLoadId" type="text" placeholder="e.g. NCDC-TL-001" />
+            </label>
+            <label class="field">
+              <span>Pickup date</span>
+              <input id="tlPickupDate" type="date" />
+            </label>
+            <label class="field">
+              <span>Pickup window</span>
+              <select id="tlPickupWindow">
+                <option value="">Select window…</option>
+                <option>08:00am-10:00am</option>
+                <option>10:00am-12:00pm</option>
+                <option>01:00pm-03:00pm</option>
+                <option>05:00pm-07:00pm</option>
+                <option>08:00pm-10:00pm</option>
+                <option>10:00pm-12:00am</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Router comments</span>
+              <textarea id="tlRouterComments" rows="2" placeholder="Anything for dock to know…"></textarea>
+            </label>
+            <label class="field">
+              <span>Add order by BOL#</span>
+              <input id="tlAddBol" type="text" placeholder="e.g. BOL-001" />
+            </label>
+            <button id="tlAddBtn" class="primary-btn">Add to truckload</button>
+            <p id="tlBuildStatus" class="upload-status"></p>
+          </div>
+
+          <!-- current building -->
+          <div class="card flex-1">
+            <h3 class="card-title">Current truckload lines</h3>
+            <ul id="tlCurrentList" class="simple-list"></ul>
+            <button id="tlSaveBtn" class="primary-btn mt">Save truckload</button>
+          </div>
+        </div>
+
+        <div class="card mt">
+          <div class="card-header-inline">
+            <h3 class="card-title">All truckloads</h3>
+            <div class="inline-actions">
+              <button class="ghost-btn" data-filter="today" id="tlFilterToday">Today</button>
+              <button class="ghost-btn" data-filter="tomorrow" id="tlFilterTomorrow">Tomorrow</button>
+              <input type="date" id="tlFilterDate" />
+              <button class="ghost-btn" id="tlFilterClear">Clear</button>
+            </div>
+          </div>
+          <div class="table-wrapper">
+            <table class="simple-table" id="truckloadsTable">
+              <thead>
+                <tr>
+                  <th>Load ID</th>
+                  <th>Pickup date</th>
+                  <th>Window</th>
+                  <th># Orders</th>
+                  <th>TTL QTY</th>
+                  <th>TTL $</th>
+                  <th>Router comments</th>
+                </tr>
+              </thead>
+              <tbody id="truckloadsTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- METRICS VIEW -->
+      <section id="metricsView" class="view" aria-label="Metrics view">
+        <h2 class="view-title">Metrics</h2>
+        <p class="view-sub">Sample metrics based on current in-memory orders/truckloads.</p>
+        <div class="card-row">
+          <div class="metric-card">
+            <div class="metric-label">Total Orders</div>
+            <div class="metric-value" id="mTotalOrders">0</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Ready to Stage</div>
+            <div class="metric-value" id="mReadyToStage">0</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Today’s Loads</div>
+            <div class="metric-value" id="mTodayLoads">0</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Truck Utilization (fake)</div>
+            <div class="metric-value" id="mUtilization">82%</div>
+          </div>
+        </div>
+        <div class="card mt">
+          <h3 class="card-title">Notes</h3>
+          <p class="card-text">
+            These are placeholder rollups so you can see the layout. When we move to Firebase/WMS we’ll feed real times:
+            pick-release-to-ship avg, staging time by associate, loading time by associate, customer-specific SLAs, etc.
+          </p>
+        </div>
+      </section>
+
+      <!-- SETTINGS VIEW -->
+      <section id="settingsView" class="view" aria-label="Settings view">
+        <h2 class="view-title">Settings</h2>
+        <p class="view-sub">Owner panel to manage roles and time-slot capacities.</p>
+
+        <div class="card">
+          <h3 class="card-title">Time-slot capacities</h3>
+          <p class="card-text">Adjust max per slot & per load type (LTL, Truckload, Floorload). Stored in browser for now.</p>
+          <div id="capacityForm" class="capacity-grid">
+            <!-- JS will insert inputs -->
+          </div>
+          <button id="saveCapacityBtn" class="primary-btn mt">Save capacities</button>
+          <p id="capacitySaveStatus" class="upload-status"></p>
+        </div>
+
+        <div class="card mt">
+          <h3 class="card-title">Users (local only)</h3>
+          <p class="card-text">Simple, local-only list of people who can log in later when we hook real auth.</p>
+          <ul id="usersList" class="simple-list"></ul>
+        </div>
+      </section>
+    </div>
+  </main>
+
   <script src="js/app.js"></script>
 </body>
 </html>
