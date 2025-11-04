@@ -1,5 +1,0 @@
-STEP 1: Go to https://github.com and log in.
-STEP 2: Create a new repository named 'ncdc-shipping-dashboard'.
-STEP 3: Upload all files from this folder.
-STEP 4: Go to Settings → Pages → Set Source to 'main' branch → Save.
-STEP 5: Wait 1–2 minutes, your dashboard will be live at https://<yourusername>.github.io/ncdc-shipping-dashboard.
