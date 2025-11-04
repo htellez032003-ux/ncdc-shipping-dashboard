@@ -1,0 +1,7 @@
+body{font-family:sans-serif;margin:0;background:#edf2fb;color:#111}
+.hidden{display:none}
+.login-screen{display:flex;align-items:center;justify-content:center;height:100vh;background:#e5e9f3}
+.login-card{background:#fff;padding:2rem;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,0.1)}
+.primary-btn{background:#2563eb;color:#fff;border:none;padding:.5rem 1rem;border-radius:6px;cursor:pointer}
+.sidebar{width:220px;background:#0f172a;color:#fff;position:fixed;top:0;bottom:0;padding:1rem}
+.main{margin-left:220px;padding:1rem}

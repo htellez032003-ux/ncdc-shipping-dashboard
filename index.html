@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NCDC Shipping Dashboard</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      <h1 class="app-title">NCDC Shipping Dashboard</h1>
+      <p>Owner / Admin sign in</p>
+      <label>Email</label>
+      <input id="login-email" type="email" class="input" value="htellez032003@gmail.com" />
+      <label>Password</label>
+      <input id="login-password" type="password" class="input" value="Ltapparel040523" />
+      <button id="login-button" class="primary-btn">Log In</button>
+      <p id="login-error" class="error-text" style="display:none;">Invalid credentials.</p>
+    </div>
+  </div>
+  <div id="app-shell" class="app-shell hidden">
+    <aside class="sidebar">
+      <h2>NCDC</h2>
+      <p>Shipping Dashboard</p>
+      <button id="logout-button" class="secondary-btn">Log out</button>
+    </aside>
+    <main class="main">
+      <header><h1>Orders</h1></header>
+      <section id="orders-view"><p>Welcome to the dashboard!</p></section>
+    </main>
+  </div>
+  <script src="js/app.js"></script>
+</body>
+</html>
