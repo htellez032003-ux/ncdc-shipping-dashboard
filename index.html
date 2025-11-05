@@ -1,32 +1,218 @@
-
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NCDC Shipping Dashboard v7</title>
-    <link rel="stylesheet" href="css/style.css">
-    <script defer src="js/app.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NCDC Shipping Dashboard</title>
+  <link rel="stylesheet" href="css/styles.css" />
 </head>
-<body class="light-theme">
+<body>
+  <!-- Login overlay -->
+  <div id="login-overlay" class="login-overlay">
+    <div class="login-card">
+      <div class="login-logo">NCDC</div>
+      <h1 class="login-title">NCDC Shipping Dashboard</h1>
+      <p class="login-subtitle">Owner / Admin sign in</p>
+      <label class="login-label" for="login-email">Email</label>
+      <input id="login-email" type="email" class="login-input" placeholder="you@example.com" value="htellez032003@gmail.com" />
+      <label class="login-label" for="login-password">Password</label>
+      <input id="login-password" type="password" class="login-input" placeholder="Password" value="Ltapparel040523" />
+      <button id="login-btn" class="btn-primary">Log In</button>
+      <p class="login-hint">(Use <strong>htellez032003@gmail.com</strong> / <strong>Ltapparel040523</strong>)</p>
+      <p id="login-error" class="login-error hidden">Invalid credentials</p>
+    </div>
+  </div>
+
+  <!-- App layout -->
+  <div class="app-shell">
+    <!-- Sidebar -->
     <aside class="sidebar">
-        <div class="logo">NCDC</div>
-        <nav>
-            <ul>
-                <li>Orders</li>
-                <li>Dock</li>
-                <li>Today's Pick Ups</li>
-                <li>Truckloads</li>
-                <li>Metrics</li>
-                <li>History</li>
-                <li>Team</li>
-                <li>Settings</li>
-            </ul>
-        </nav>
+      <div class="sidebar-brand">
+        <div class="sidebar-logo">N</div>
+        <div class="sidebar-title">
+          <div class="brand-name">NCDC</div>
+          <div class="brand-subtitle">Shipping Dashboard</div>
+        </div>
+      </div>
+      <nav class="sidebar-nav">
+        <button class="nav-item active" data-tab="orders">Orders</button>
+        <button class="nav-item" data-tab="dock">Dock</button>
+        <button class="nav-item" data-tab="todays-pickups">Today's Pick Ups</button>
+        <button class="nav-item" data-tab="truckloads">Truckloads</button>
+        <button class="nav-item" data-tab="metrics">Metrics</button>
+        <button class="nav-item" data-tab="history">History</button>
+        <button class="nav-item" data-tab="team">Team</button>
+        <button class="nav-item" data-tab="settings">Settings</button>
+      </nav>
+      <div class="sidebar-footer">
+        <button id="logout-btn" class="btn-secondary small">Logout</button>
+      </div>
     </aside>
-    <main>
-        <h1>Welcome to NCDC Shipping Dashboard</h1>
-        <p>All 8 tabs and new personalization features included.</p>
+
+    <!-- Main -->
+    <main class="main-panel">
+      <!-- Orders Tab -->
+      <section id="tab-orders" class="tab-panel active">
+        <header class="tab-header">
+          <div>
+            <h2 class="tab-title" data-i18n="orders.title">Orders</h2>
+            <p class="tab-subtitle" data-i18n="orders.subtitle">Upload CSV and manage orders.</p>
+          </div>
+          <div class="csv-meta">
+            <span data-i18n="orders.csvUpdated">CSV updated:</span>
+            <span id="csv-updated">--</span>
+          </div>
+        </header>
+
+        <!-- Upload + filters -->
+        <div class="orders-toolbar">
+          <div class="upload-box">
+            <label for="orders-csv" class="upload-label" data-i18n="orders.uploadLabel">Upload Orders CSV</label>
+            <input type="file" id="orders-csv" accept=".csv" />
+            <p class="upload-hint">Must include PO Num, Customer, Shipper, TTL QTY, TTL Amt, Start Date, Cancel Date, Author#.</p>
+          </div>
+          <div class="orders-filters">
+            <input id="filter-customer" type="text" placeholder="Customer..." />
+            <input id="filter-shipper" type="text" placeholder="Shipper..." list="shipper-list" />
+            <datalist id="shipper-list"></datalist>
+            <input id="filter-from" type="date" />
+            <input id="filter-to" type="date" />
+            <button id="filter-apply" class="btn-secondary">Apply</button>
+            <button id="filter-clear" class="btn-ghost">Clear</button>
+          </div>
+          <div class="orders-actions">
+            <span id="selected-count">Selected POs: 0</span>
+            <button id="build-truckload-btn" class="btn-primary">Build Truckload</button>
+          </div>
+        </div>
+
+        <!-- Orders grid -->
+        <div class="orders-grid-wrapper">
+          <table class="orders-grid">
+            <thead>
+              <tr>
+                <th><input type="checkbox" id="select-all-rows" /></th>
+                <th>PO Num</th>
+                <th>Customer</th>
+                <th>Shipper</th>
+                <th>Author#</th>
+                <th>TTL QTY</th>
+                <th>TTL $</th>
+                <th>Start Date</th>
+                <th>Cancel Date</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="orders-tbody">
+              <!-- filled by JS -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Calendar under grid -->
+        <div class="orders-calendar-section">
+          <h3 class="section-title">Scheduled Pickups Calendar</h3>
+          <p class="section-help">Not affected by filters. Click a day to see time slot availability.</p>
+          <div id="orders-calendar" class="calendar"></div>
+          <div id="calendar-day-detail" class="calendar-detail hidden"></div>
+        </div>
+      </section>
+
+      <!-- Dock Tab -->
+      <section id="tab-dock" class="tab-panel">
+        <header class="tab-header">
+          <h2 class="tab-title">Dock</h2>
+          <p class="tab-subtitle">Staging view by truckload.</p>
+        </header>
+        <div class="placeholder-card">
+          Dock view placeholder — staging buckets (Available ➜ In Progress ➜ Fully Staged), pallet & location entry, dock associate assignment.
+        </div>
+      </section>
+
+      <!-- Today's Pickups -->
+      <section id="tab-todays-pickups" class="tab-panel">
+        <header class="tab-header">
+          <h2 class="tab-title">Today's Pick Ups</h2>
+          <p class="tab-subtitle">Live view of today's trucks.</p>
+        </header>
+        <div class="placeholder-card">
+          Today's pickup grid — match Dock view, show door/arrive/depart timestamps, keep trucks visible for whole day.
+        </div>
+      </section>
+
+      <!-- Truckloads -->
+      <section id="tab-truckloads" class="tab-panel">
+        <header class="tab-header">
+          <h2 class="tab-title">Truckloads</h2>
+          <p class="tab-subtitle">Built loads, calendar view, capacity flags.</p>
+        </header>
+        <div class="placeholder-card">
+          Truckloads table + day/week view + CSV/PDF export (future).
+        </div>
+      </section>
+
+      <!-- Metrics -->
+      <section id="tab-metrics" class="tab-panel">
+        <header class="tab-header">
+          <h2 class="tab-title">Metrics</h2>
+          <p class="tab-subtitle">Rolling 7-day metrics, trends, dock associate performance.</p>
+        </header>
+        <div class="placeholder-card">
+          Metrics charts go here.
+        </div>
+      </section>
+
+      <!-- History -->
+      <section id="tab-history" class="tab-panel">
+        <header class="tab-header">
+          <h2 class="tab-title">History</h2>
+          <p class="tab-subtitle">Departed truckloads. Click load ID to expand POs.</p>
+        </header>
+        <div class="placeholder-card">
+          History table placeholder.
+        </div>
+      </section>
+
+      <!-- Team -->
+      <section id="tab-team" class="tab-panel">
+        <header class="tab-header">
+          <h2 class="tab-title">Team</h2>
+          <p class="tab-subtitle">Manage dock/routers, shifts, simple permissions.</p>
+        </header>
+        <div class="placeholder-card">
+          Team management placeholder.
+        </div>
+      </section>
+
+      <!-- Settings -->
+      <section id="tab-settings" class="tab-panel">
+        <header class="tab-header">
+          <h2 class="tab-title">Settings</h2>
+          <p class="tab-subtitle">Personal preferences.</p>
+        </header>
+        <div class="settings-grid">
+          <div class="settings-card">
+            <h3>Theme</h3>
+            <label class="switch">
+              <input type="checkbox" id="theme-toggle" />
+              <span class="slider"></span>
+            </label>
+            <p class="settings-hint">Dark mode</p>
+          </div>
+          <div class="settings-card">
+            <h3>Language</h3>
+            <select id="language-select">
+              <option value="en">English</option>
+              <option value="es">Español (Latinoamérica)</option>
+            </select>
+            <p class="settings-hint">Applies to your device only.</p>
+          </div>
+        </div>
+      </section>
     </main>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script src="data/shippers.js"></script>
 </body>
 </html>
