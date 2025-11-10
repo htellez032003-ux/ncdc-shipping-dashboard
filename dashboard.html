@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <title>NCDC Shipping Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="app-body">
+  <div class="app-shell">
+    <!-- SIDEBAR -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo-circle">N</div>
+        <div class="sidebar-title-wrap">
+          <div class="sidebar-title">NCDC Shipping Dashboard</div>
+          <div class="sidebar-subtitle" id="currentUserRole">Owner</div>
+        </div>
+      </div>
+      <nav class="sidebar-nav">
+        <button class="nav-item active" data-tab="ordersTab">Orders</button>
+        <button class="nav-item" data-tab="dockTab">Dock</button>
+        <button class="nav-item" data-tab="todayTab">Today's Pick Ups</button>
+        <button class="nav-item" data-tab="truckloadsTab">Truckloads</button>
+        <button class="nav-item" data-tab="metricsTab">Metrics</button>
+        <button class="nav-item" data-tab="historyTab">History</button>
+        <button class="nav-item" data-tab="teamTab">Team</button>
+        <button class="nav-item" data-tab="settingsTab">Settings</button>
+      </nav>
+      <div class="sidebar-footer">
+        <button id="logoutBtn" class="btn-secondary small">Sign Out</button>
+      </div>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="main-panel">
+      <header class="topbar">
+        <h1 id="topbarTitle">Orders</h1>
+        <div class="topbar-right">
+          <span id="lastCsvStamp" class="topbar-pill">CSV: Not loaded</span>
+          <span id="themeIndicator" class="topbar-pill">Light</span>
+          <span id="langIndicator" class="topbar-pill">EN</span>
+        </div>
+      </header>
+
+      <!-- TABS WRAPPER -->
+      <section class="tabs-wrapper">
+        <!-- ORDERS TAB -->
+        <div id="ordersTab" class="tab-panel active">
+          <div class="panel-block">
+            <div class="panel-header">
+              <h2>Orders / PO List</h2>
+              <div class="panel-actions">
+                <label class="upload-label">
+                  Upload CSV
+                  <input type="file" id="csvUpload" accept=".csv" />
+                </label>
+                <button id="clearFiltersBtn" class="btn-secondary small">Clear Filters</button>
+              </div>
+            </div>
+
+            <!-- Filters -->
+            <div class="filter-row">
+              <input id="filterPO" class="filter-input" placeholder="Filter by PO Num..." />
+              <input id="filterCustomer" class="filter-input" placeholder="Filter by Customer..." />
+              <input id="filterCustName" class="filter-input" placeholder="Filter by Cust Name..." />
+              <input id="filterShipper" class="filter-input" placeholder="Filter by Shipper..." />
+              <input id="filterDate" class="filter-input" placeholder="Filter by Scheduled Date (YYYY-MM-DD)..." />
+            </div>
+
+            <!-- ORDERS TABLE (scrollable) -->
+            <div class="table-wrap tall">
+              <table class="data-table" id="ordersTable">
+                <thead>
+                  <tr>
+                    <th><input type="checkbox" id="selectAllOrders" /></th>
+                    <th>PO Num</th>
+                    <th>Customer</th>
+                    <th>Cust Name</th>
+                    <th>Shipper</th>
+                    <th>TTL QTY</th>
+                    <th>TTL Amt</th>
+                    <th>Scheduled Date</th>
+                    <th>Pickup Window</th>
+                    <th>Author#</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="ordersTbody">
+                  <!-- rows injected -->
+                </tbody>
+              </table>
+            </div>
+            <div class="mt-12">
+              <button id="createTruckloadBtn" class="btn-primary small">Build Truckload from Selected</button>
+            </div>
+          </div>
+
+          <!-- CALENDAR UNDER ORDERS (NOT AFFECTED BY FILTERS) -->
+          <div class="panel-block mt-16">
+            <div class="panel-header">
+              <h2>Pickup Calendar</h2>
+              <p class="muted-text">Shows all scheduled pickups from uploaded CSV. Filters above do not affect this.</p>
+            </div>
+            <div id="calendarContainer" class="calendar-container">
+              <!-- calendar injected -->
+            </div>
+            <div id="calendarSlotSummary" class="slot-summary"></div>
+          </div>
+        </div>
+
+        <!-- DOCK TAB -->
+        <div id="dockTab" class="tab-panel">
+          <div class="panel-block">
+            <div class="panel-header">
+              <h2>Dock – Staging & Loading</h2>
+              <div class="panel-actions">
+                <select id="dockDateFilter" class="filter-input">
+                  <option value="today">Today</option>
+                  <option value="tomorrow">Tomorrow</option>
+                  <option value="range">Range...</option>
+                </select>
+                <input type="date" id="dockStart" class="filter-input hidden" />
+                <input type="date" id="dockEnd" class="filter-input hidden" />
+              </div>
+            </div>
+            <div class="summary-row" id="dockSummaryRow">
+              <!-- real-time totals inserted -->
+            </div>
+            <div class="table-wrap tall">
+              <table class="data-table" id="dockTable">
+                <thead>
+                  <tr>
+                    <th>Load ID</th>
+                    <th>BOL</th>
+                    <th>Customer</th>
+                    <th>Pickup Window</th>
+                    <th>Carrier/Shipper</th>
+                    <th>Routed Pallets</th>
+                    <th>Total Cartons</th>
+                    <th>Staged Location</th>
+                    <th>Assigned To</th>
+                    <th>Arrival</th>
+                    <th>Departure</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="dockTbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- TODAY'S PICKUPS TAB -->
+        <div id="todayTab" class="tab-panel">
+          <div class="panel-block">
+            <div class="panel-header">
+              <h2>Today's Pick Ups</h2>
+              <p class="muted-text">Do not auto-remove until next day.</p>
+            </div>
+            <div class="summary-row" id="todaySummaryRow"></div>
+            <div class="table-wrap tall">
+              <table class="data-table" id="todayTable">
+                <thead>
+                  <tr>
+                    <th>Load ID</th>
+                    <th>BOL</th>
+                    <th>Customer</th>
+                    <th>Pickup Window</th>
+                    <th>Carrier/Shipper</th>
+                    <th>Total Cartons</th>
+                    <th>Total Pallets</th>
+                    <th>Staged Location</th>
+                    <th>Router Notes</th>
+                    <th>Arrived</th>
+                    <th>Departed</th>
+                  </tr>
+                </thead>
+                <tbody id="todayTbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- TRUCKLOADS TAB -->
+        <div id="truckloadsTab" class="tab-panel">
+          <div class="panel-block">
+            <div class="panel-header">
+              <h2>Truckloads</h2>
+              <div class="panel-actions">
+                <select id="truckloadsDateFilter" class="filter-input">
+                  <option value="today">Today</option>
+                  <option value="thisweek">This Week</option>
+                  <option value="all">All</option>
+                </select>
+              </div>
+            </div>
+            <div class="summary-row" id="truckloadsSummaryRow"></div>
+            <div class="table-wrap tall">
+              <table class="data-table" id="truckloadsTable">
+                <thead>
+                  <tr>
+                    <th>Load ID</th>
+                    <th>Pickup Date</th>
+                    <th>Pickup Window</th>
+                    <th>Carrier/Shipper</th>
+                    <th>Orders</th>
+                    <th>TTL QTY</th>
+                    <th>TTL $</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="truckloadsTbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- METRICS TAB -->
+        <div id="metricsTab" class="tab-panel">
+          <div class="panel-block">
+            <div class="panel-header">
+              <h2>Metrics</h2>
+              <button id="exportMetricsBtn" class="btn-secondary small">Export Metrics CSV</button>
+            </div>
+            <div class="summary-row" id="metricsSummaryRow"></div>
+            <div class="chart-row">
+              <canvas id="chartDailyOrders"></canvas>
+              <canvas id="chartDockPerformance"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- HISTORY TAB -->
+        <div id="historyTab" class="tab-panel">
+          <div class="panel-block">
+            <div class="panel-header">
+              <h2>Departed / History</h2>
+              <p class="muted-text">Hide POs in main view; click Load ID to see details.</p>
+            </div>
+            <div class="filter-row">
+              <input id="historyPO" class="filter-input" placeholder="Filter by PO..." />
+              <input id="historyBOL" class="filter-input" placeholder="Filter by BOL..." />
+              <input id="historyCustomer" class="filter-input" placeholder="Filter by Customer..." />
+              <input id="historyDate" class="filter-input" placeholder="Pickup date YYYY-MM-DD..." />
+            </div>
+            <div class="table-wrap tall">
+              <table class="data-table" id="historyTable">
+                <thead>
+                  <tr>
+                    <th>Load ID</th>
+                    <th>Pickup Date</th>
+                    <th>Carrier/Shipper</th>
+                    <th>Total Cartons</th>
+                    <th>Total $</th>
+                    <th>View</th>
+                  </tr>
+                </thead>
+                <tbody id="historyTbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- TEAM TAB -->
+        <div id="teamTab" class="tab-panel">
+          <div class="panel-block">
+            <div class="panel-header">
+              <h2>Team & Shifts</h2>
+              <p class="muted-text">Owner can change roles; admins can assign dock/routers.</p>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table" id="teamTable">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Role</th>
+                    <th>Shift</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="teamTbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- SETTINGS TAB -->
+        <div id="settingsTab" class="tab-panel">
+          <div class="panel-block">
+            <div class="panel-header">
+              <h2>Settings</h2>
+            </div>
+            <div class="settings-grid">
+              <div class="settings-card">
+                <h3>Appearance</h3>
+                <label class="switch-row">
+                  <span>Dark mode</span>
+                  <input type="checkbox" id="darkModeToggle" />
+                </label>
+              </div>
+              <div class="settings-card">
+                <h3>Language</h3>
+                <select id="languageSelect" class="form-input">
+                  <option value="en">English (default)</option>
+                  <option value="es-la">Español (Latinoamérica)</option>
+                </select>
+              </div>
+              <div class="settings-card">
+                <h3>Pickup Slot Capacities</h3>
+                <p class="muted-text">Admin/Owner can edit per window & type</p>
+                <div id="slotCapacityList"></div>
+              </div>
+              <div class="settings-card">
+                <h3>Owner Controls</h3>
+                <p class="muted-text">Transfer owner requires password</p>
+                <input id="ownerTransferEmail" class="form-input" placeholder="New owner email..." />
+                <input id="ownerConfirmPassword" class="form-input" placeholder="Current owner password..." type="password" />
+                <button id="transferOwnerBtn" class="btn-secondary small">Transfer Owner</button>
+                <p id="ownerTransferMsg" class="muted-text"></p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Simple modal for truckload build -->
+  <div class="modal-backdrop hidden" id="truckloadModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Create Truckload</h3>
+        <button id="closeTruckloadModal" class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <label class="form-label">Pickup Date</label>
+        <input type="date" id="tlPickupDate" class="form-input" />
+
+        <label class="form-label">Pickup Window</label>
+        <select id="tlPickupWindow" class="form-input">
+          <option value="">Select window...</option>
+          <option value="08:00am-10:00am">08:00am-10:00am</option>
+          <option value="10:00am-12:00pm">10:00am-12:00pm</option>
+          <option value="01:00pm-03:00pm">01:00pm-03:00pm</option>
+          <option value="05:00pm-07:00pm">05:00pm-07:00pm</option>
+          <option value="08:00pm-10:00pm">08:00pm-10:00pm</option>
+          <option value="10:00pm-12:00am">10:00pm-12:00am</option>
+        </select>
+
+        <label class="form-label">Shipper / Carrier</label>
+        <input id="tlShipper" class="form-input" placeholder="Type to search shipper..." list="shipperList" />
+        <datalist id="shipperList"></datalist>
+
+        <label class="form-label">Router Comments</label>
+        <textarea id="tlComments" class="form-input" rows="3"></textarea>
+        <p id="tlCapacityWarning" class="form-error hidden">This exceeds slot capacity.</p>
+      </div>
+      <div class="modal-footer">
+        <button id="saveTruckloadBtn" class="btn-primary small">Save Truckload</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
