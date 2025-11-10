@@ -1,270 +1,37 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
-  <head>
-    <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0"
-    />
-    <title>NCDC Shipping Dashboard</title>
-    <!-- keep these paths exactly like this -->
-    <link rel="stylesheet" href="./css/style.css" />
-  </head>
-  <body>
-    <!-- LOGIN SCREEN -->
-    <div id="login-screen" class="login-screen">
-      <div class="login-card">
-        <div class="login-header">
-          <div class="logo-box small">N</div>
-          <div>
-            <h1 class="app-title">NCDC Shipping Dashboard</h1>
-            <p class="muted">Owner / Admin sign in</p>
-          </div>
-        </div>
-        <p class="muted">
-          (Use <strong>htellez032003@gmail.com</strong> /
-          <strong>Ltapparel040523</strong>)
-        </p>
-        <label>Email</label>
-        <input id="login-email" type="email" />
-        <label>Password</label>
-        <input id="login-password" type="password" />
-        <button id="login-btn" class="btn primary">Log In</button>
-        <p id="login-error" class="error hidden">Invalid credentials</p>
-      </div>
-    </div>
-
-    <!-- APP SHELL -->
-    <div id="app-shell" class="app-shell hidden">
-      <aside class="sidebar">
-        <div class="sidebar-header">
-          <div class="logo-box">N</div>
-          <div>
-            <div class="sidebar-title">NCDC</div>
-            <div class="sidebar-sub">Shipping Dashboard</div>
-          </div>
-        </div>
-        <nav>
-          <button data-tab="orders" class="nav-link active">Orders</button>
-          <button data-tab="dock" class="nav-link">Dock</button>
-          <button data-tab="today" class="nav-link">Today's Pick Ups</button>
-          <button data-tab="truckloads" class="nav-link">Truckloads</button>
-          <button data-tab="metrics" class="nav-link">Metrics</button>
-          <button data-tab="history" class="nav-link">History</button>
-          <button data-tab="team" class="nav-link">Team</button>
-          <button data-tab="settings" class="nav-link">Settings</button>
-        </nav>
-        <button id="logout-btn" class="btn secondary small">Logout</button>
-      </aside>
-
-      <main class="main">
-        <header class="topbar">
-          <h2 id="view-title">Orders</h2>
-          <p id="csv-updated" class="muted">CSV updated: --</p>
-        </header>
-
-        <!-- ORDERS VIEW -->
-        <section id="view-orders" class="view active">
-          <div class="card">
-            <h3>Upload CSV and manage orders.</h3>
-            <p class="muted">
-              Must include PO Num, Customer, Cust Name, Shipper, TTL QTY, TTL
-              Amt, Start Date, Cancel Date, Author#.
-            </p>
-            <div class="upload-row">
-              <label class="file-label">
-                Upload Orders CSV
-                <input id="orders-file" type="file" accept=".csv" />
-              </label>
-              <span id="orders-file-name" class="muted"></span>
-            </div>
-            <div class="filters-row">
-              <input
-                id="filter-customer"
-                type="text"
-                placeholder="Customer..."
-              />
-              <input
-                id="filter-custname"
-                type="text"
-                placeholder="Customer name..."
-              />
-              <input
-                id="filter-shipper"
-                type="text"
-                placeholder="Shipper..."
-              />
-              <input id="filter-from" type="date" />
-              <input id="filter-to" type="date" />
-              <button id="filter-apply" class="btn small">Apply</button>
-              <button id="filter-clear" class="btn small secondary">
-                Clear
-              </button>
-              <div class="selected-pos">
-                Selected POs:
-                <span id="selected-count">0</span>
-              </div>
-              <button id="build-truckload" class="btn small primary">
-                Build Truckload
-              </button>
-            </div>
-          </div>
-
-          <div class="card">
-            <div class="orders-table-wrapper">
-              <table class="orders-table">
-                <thead>
-                  <tr>
-                    <th><input id="orders-select-all" type="checkbox" /></th>
-                    <th>PO Num</th>
-                    <th>Customer</th>
-                    <th>Cust Name</th>
-                    <th>Shipper</th>
-                    <th>Author#</th>
-                    <th>TTL QTY</th>
-                    <th>TTL $</th>
-                    <th>Start Date</th>
-                    <th>Cancel Date</th>
-                    <th>Status</th>
-                    <th>Load ID</th>
-                  </tr>
-                </thead>
-                <tbody id="orders-tbody"></tbody>
-              </table>
-            </div>
-          </div>
-
-          <div class="card">
-            <h3>Scheduled Pickups Calendar</h3>
-            <p class="muted">
-              Not affected by filters. Click a day to see time slot availability.
-            </p>
-            <div id="orders-calendar" class="calendar"></div>
-            <div id="calendar-day-detail" class="muted tiny"></div>
-          </div>
-        </section>
-
-        <!-- DOCK VIEW -->
-        <section id="view-dock" class="view hidden">
-          <div class="card">
-            <h3>Dock Staging</h3>
-            <p class="muted">
-              Stage by truckload. Dock workers can self-assign.
-            </p>
-            <div id="dock-summary" class="tag-row"></div>
-            <div id="dock-list"></div>
-          </div>
-        </section>
-
-        <!-- TODAY'S PICKUPS VIEW -->
-        <section id="view-today" class="view hidden">
-          <div class="card">
-            <h3>Today's Pick Ups</h3>
-            <p class="muted">
-              Live view for the dock: arrivals, departures, quantities.
-            </p>
-            <div id="today-metrics" class="tag-row"></div>
-            <div id="today-table"></div>
-          </div>
-        </section>
-
-        <!-- TRUCKLOADS VIEW -->
-        <section id="view-truckloads" class="view hidden">
-          <div class="card">
-            <h3>Truckloads</h3>
-            <p class="muted">
-              Shows truckloads created from Orders. Edit, export, review
-              capacity.
-            </p>
-            <div id="truckloads-table"></div>
-          </div>
-        </section>
-
-        <!-- METRICS VIEW -->
-        <section id="view-metrics" class="view hidden">
-          <div class="card">
-            <h3>Metrics</h3>
-            <p class="muted">7-day rolling by default.</p>
-            <div id="metrics-content" class="muted">
-              (metrics UI to be filled later)
-            </div>
-          </div>
-        </section>
-
-        <!-- HISTORY VIEW -->
-        <section id="view-history" class="view hidden">
-          <div class="card">
-            <h3>Departed / historical truckloads</h3>
-            <div id="history-table"></div>
-          </div>
-        </section>
-
-        <!-- TEAM VIEW -->
-        <section id="view-team" class="view hidden">
-          <div class="card">
-            <h3>Team</h3>
-            <div id="team-table" class="muted">(simple team table later)</div>
-          </div>
-        </section>
-
-        <!-- SETTINGS VIEW -->
-        <section id="view-settings" class="view hidden">
-          <div class="card">
-            <h3>Settings</h3>
-            <div class="settings-row">
-              <label for="theme-toggle">Dark mode</label>
-              <input id="theme-toggle" type="checkbox" />
-            </div>
-            <div class="settings-row">
-              <label for="lang-select">Language</label>
-              <select id="lang-select">
-                <option value="en">English</option>
-                <option value="es-mx">Español (Latinoamérica)</option>
-              </select>
-            </div>
-            <p class="muted tiny">
-              These settings are saved locally for this browser. Orders, truckloads, status updates stay global.
-            </p>
-          </div>
-        </section>
-      </main>
-    </div>
-
-    <!-- MODAL for BUILD TRUCKLOAD -->
-    <div id="modal-overlay" class="modal-overlay hidden">
-      <div class="modal">
-        <h3>Create Truckload</h3>
-        <p class="muted">
-          You selected <span id="modal-po-count">0</span> POs.
-        </p>
-        <label>Load ID (optional)</label>
-        <input id="modal-load-id" type="text" placeholder="Auto-generate if blank" />
-        <label>Shipper</label>
-        <input id="modal-shipper" type="text" placeholder="Must match list if you want auto-type" />
-        <label>Load type</label>
-        <select id="modal-load-type">
-          <option value="LTL">LTL</option>
-          <option value="Truckload">Truckload</option>
-          <option value="Floorload">Floorload</option>
-        </select>
-        <label>Pickup date</label>
-        <input id="modal-pickup-date" type="date" />
-        <label>Pickup window</label>
-        <select id="modal-pickup-window">
-          <option value="08:00am-10:00am">08:00am-10:00am</option>
-          <option value="10:00am-12:00pm">10:00am-12:00pm</option>
-          <option value="01:00pm-03:00pm">01:00pm-03:00pm</option>
-          <option value="5:00pm-7:00pm">5:00pm-7:00pm</option>
-          <option value="8:00pm-10:00pm">8:00pm-10:00pm</option>
-          <option value="10:00pm-12:00am">10:00pm-12:00am</option>
-        </select>
-        <div class="modal-actions">
-          <button id="modal-cancel" class="btn secondary small">Cancel</button>
-          <button id="modal-save" class="btn primary small">Save truckload</button>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>NCDC Shipping Dashboard – Sign In</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="login-body">
+  <div class="login-container">
+    <div class="login-card">
+      <div class="login-logo">
+        <!-- NCDC logo placeholder -->
+        <div class="logo-circle">N</div>
+        <div>
+          <h1 class="app-title">NCDC Shipping Dashboard</h1>
+          <p class="app-subtitle">Internal Scheduling & Dock Control</p>
         </div>
       </div>
-    </div>
+      <form id="loginForm" class="login-form">
+        <label class="form-label" for="loginEmail">Email</label>
+        <input id="loginEmail" type="email" class="form-input" placeholder="you@example.com" required />
 
-    <script src="./js/app.js" defer></script>
-  </body>
+        <label class="form-label" for="loginPassword">Password</label>
+        <input id="loginPassword" type="password" class="form-input" placeholder="••••••••" required />
+
+        <button type="submit" class="btn-primary w-full">Sign In</button>
+        <p id="loginError" class="form-error hidden">Invalid credentials.</p>
+      </form>
+      <p class="login-hint">
+        Owner login (current): <strong>htellez032003@gmail.com</strong> / <strong>Ltapparel040523</strong>
+      </p>
+    </div>
+  </div>
+  <script src="script.js"></script>
+</body>
 </html>
