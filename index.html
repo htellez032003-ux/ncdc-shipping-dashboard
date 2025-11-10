@@ -4,22 +4,37 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1.0" />
   <title>NCDC Shipping Dashboard</title>
-  <link rel="stylesheet" href="./css/style.css">
+  <!-- your repo structure uses /css/style.css -->
+  <link rel="stylesheet" href="./css/style.css" />
 </head>
 <body>
+  <!-- LOGIN SCREEN -->
   <div id="login-screen" class="login-screen">
     <div class="login-card">
-      <h1>Owner / Admin sign in</h1>
-      <p>(Use <strong>htellez032003@gmail.com</strong> / <strong>Ltapparel040523</strong>)</p>
-      <label>Email</label><input id="login-email" type="email">
-      <label>Password</label><input id="login-password" type="password">
+      <h1>NCDC Shipping Dashboard</h1>
+      <p class="login-subtitle">Owner / Admin sign in</p>
+      <p class="login-hint">
+        (Use <strong>htellez032003@gmail.com</strong> / <strong>Ltapparel040523</strong>)
+      </p>
+      <label>Email</label>
+      <input id="login-email" type="email" placeholder="you@example.com" />
+      <label>Password</label>
+      <input id="login-password" type="password" placeholder="password" />
       <button id="login-btn">Log In</button>
-      <p id="login-error" class="hidden">Invalid credentials</p>
+      <p id="login-error" class="hidden error-text">Invalid credentials</p>
     </div>
   </div>
 
+  <!-- APP SHELL -->
   <div id="app-shell" class="app-shell hidden">
     <aside class="sidebar">
+      <div class="brand">
+        <div class="logo-placeholder">N</div>
+        <div class="brand-text">
+          <span class="brand-name">NCDC</span>
+          <span class="brand-sub">Shipping Dashboard</span>
+        </div>
+      </div>
       <nav>
         <button data-tab="orders" class="nav-link active">Orders</button>
         <button data-tab="dock" class="nav-link">Dock</button>
@@ -30,20 +45,175 @@
         <button data-tab="team" class="nav-link">Team</button>
         <button data-tab="settings" class="nav-link">Settings</button>
       </nav>
-      <button id="logout-btn">Logout</button>
+      <button id="logout-btn" class="logout-btn">Logout</button>
     </aside>
+
     <main class="main">
-      <section id="tab-orders" class="tab active"><h2>Orders</h2></section>
-      <section id="tab-dock" class="tab"><h2>Dock</h2></section>
-      <section id="tab-todays" class="tab"><h2>Today's Pick Ups</h2></section>
-      <section id="tab-truckloads" class="tab"><h2>Truckloads</h2></section>
-      <section id="tab-metrics" class="tab"><h2>Metrics</h2></section>
-      <section id="tab-history" class="tab"><h2>History</h2></section>
-      <section id="tab-team" class="tab"><h2>Team</h2></section>
-      <section id="tab-settings" class="tab"><h2>Settings</h2></section>
+      <!-- ORDERS TAB -->
+      <section id="tab-orders" class="tab-panel active">
+        <header class="panel-header">
+          <h2>Orders</h2>
+          <p class="muted">Upload CSV and manage orders.</p>
+          <p id="csv-updated" class="csv-updated">CSV updated: --</p>
+        </header>
+
+        <div class="card upload-card">
+          <label class="small-label">Upload Orders CSV</label>
+          <input type="file" id="orders-csv" accept=".csv" />
+          <p class="helper-text">
+            Must include PO Num, Customer, Shipper, TTL QTY, TTL Amt, Start Date, Cancel Date, Author#.
+          </p>
+        </div>
+
+        <div class="filters-row">
+          <input id="filter-customer" class="input" placeholder="Customer..." />
+          <input id="filter-shipper" class="input" placeholder="Shipper..." />
+          <input id="filter-from" type="date" class="input" />
+          <input id="filter-to" type="date" class="input" />
+          <button id="filter-apply" class="btn primary">Apply</button>
+          <button id="filter-clear" class="btn">Clear</button>
+          <span id="selected-count" class="muted">Selected POs: 0</span>
+          <button id="build-truckload" class="btn secondary">Build Truckload</button>
+        </div>
+
+        <div class="orders-table-wrap">
+          <table class="orders-table" id="orders-table">
+            <thead>
+              <tr>
+                <th><input type="checkbox" id="select-all-rows" /></th>
+                <th>PO Num</th>
+                <th>Customer</th>
+                <th>Shipper</th>
+                <th>Author#</th>
+                <th>TTL QTY</th>
+                <th>TTL $</th>
+                <th>Start Date</th>
+                <th>Cancel Date</th>
+                <th>Status</th>
+                <th>Load ID</th>
+              </tr>
+            </thead>
+            <tbody id="orders-tbody">
+              <!-- filled by JS -->
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card calendar-card">
+          <h3>Scheduled Pickups Calendar</h3>
+          <p class="muted">Not affected by filters. Click a day to see time slot availability.</p>
+          <div id="calendar-grid" class="calendar-grid">
+            <!-- JS renders 1..31 basic calendar -->
+          </div>
+          <div id="calendar-day-detail" class="calendar-day-detail">
+            <h4>Day detail</h4>
+            <p class="muted">Select a date above.</p>
+            <ul id="timeslot-list"></ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- DOCK TAB -->
+      <section id="tab-dock" class="tab-panel">
+        <h2>Dock</h2>
+        <p class="muted">Manage truckloads being staged, staged, and ready to load.</p>
+        <div class="card">
+          <h3>Available to Stage</h3>
+          <p class="muted">Truckloads assigned here will show up for dock workers.</p>
+          <div id="dock-available"></div>
+        </div>
+      </section>
+
+      <!-- TODAY'S PICK UPS TAB -->
+      <section id="tab-todays" class="tab-panel">
+        <h2>Today's Pick Ups</h2>
+        <div class="metrics-row" id="todays-metrics">
+          <!-- JS fills totals -->
+        </div>
+        <div class="card">
+          <table class="orders-table" id="todays-table">
+            <thead>
+              <tr>
+                <th>Customer</th>
+                <th>Shipper</th>
+                <th>Load ID</th>
+                <th>BOL</th>
+                <th>Status</th>
+                <th>Arrived</th>
+                <th>Departed</th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- JS -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- TRUCKLOADS TAB -->
+      <section id="tab-truckloads" class="tab-panel">
+        <h2>Truckloads</h2>
+        <p class="muted">View and edit truckloads created from Orders.</p>
+        <div id="truckloads-list" class="card">
+          <!-- JS -->
+        </div>
+      </section>
+
+      <!-- METRICS TAB -->
+      <section id="tab-metrics" class="tab-panel">
+        <h2>Metrics</h2>
+        <p class="muted">Rolling 7-day, dock productivity, and completion insights.</p>
+        <div class="card">
+          <p>Metrics view placeholder.</p>
+        </div>
+      </section>
+
+      <!-- HISTORY TAB -->
+      <section id="tab-history" class="tab-panel">
+        <h2>History</h2>
+        <p class="muted">Departed truckloads and audit trail.</p>
+        <div class="card">
+          <p>History view placeholder.</p>
+        </div>
+      </section>
+
+      <!-- TEAM TAB -->
+      <section id="tab-team" class="tab-panel">
+        <h2>Team</h2>
+        <p class="muted">Manage dock/router assignments per shift.</p>
+        <div class="card">
+          <p>Team view placeholder.</p>
+        </div>
+      </section>
+
+      <!-- SETTINGS TAB -->
+      <section id="tab-settings" class="tab-panel">
+        <h2>Settings</h2>
+        <p class="muted">Personal preferences (local only).</p>
+        <div class="card settings-card">
+          <div class="settings-row">
+            <label for="theme-toggle">Theme</label>
+            <select id="theme-toggle">
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <label for="lang-select">Language</label>
+            <select id="lang-select">
+              <option value="en">English (default)</option>
+              <option value="es">Español (Latinoamérica)</option>
+            </select>
+          </div>
+          <p class="muted small">
+            These settings are saved in your browser only. Order/truckload updates stay global.
+          </p>
+        </div>
+      </section>
     </main>
   </div>
 
+  <!-- your repo uses /js/app.js -->
   <script src="./js/app.js"></script>
 </body>
 </html>
