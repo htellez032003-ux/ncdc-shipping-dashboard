@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>NCDC Shipping Dashboard</title>
+  <link rel="stylesheet" href="./css/style.css">
+</head>
+<body>
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      <h1>Owner / Admin sign in</h1>
+      <p>(Use <strong>htellez032003@gmail.com</strong> / <strong>Ltapparel040523</strong>)</p>
+      <label>Email</label><input id="login-email" type="email">
+      <label>Password</label><input id="login-password" type="password">
+      <button id="login-btn">Log In</button>
+      <p id="login-error" class="hidden">Invalid credentials</p>
+    </div>
+  </div>
+
+  <div id="app-shell" class="app-shell hidden">
+    <aside class="sidebar">
+      <nav>
+        <button data-tab="orders" class="nav-link active">Orders</button>
+        <button data-tab="dock" class="nav-link">Dock</button>
+        <button data-tab="todays" class="nav-link">Today's Pick Ups</button>
+        <button data-tab="truckloads" class="nav-link">Truckloads</button>
+        <button data-tab="metrics" class="nav-link">Metrics</button>
+        <button data-tab="history" class="nav-link">History</button>
+        <button data-tab="team" class="nav-link">Team</button>
+        <button data-tab="settings" class="nav-link">Settings</button>
+      </nav>
+      <button id="logout-btn">Logout</button>
+    </aside>
+    <main class="main">
+      <section id="tab-orders" class="tab active"><h2>Orders</h2></section>
+      <section id="tab-dock" class="tab"><h2>Dock</h2></section>
+      <section id="tab-todays" class="tab"><h2>Today's Pick Ups</h2></section>
+      <section id="tab-truckloads" class="tab"><h2>Truckloads</h2></section>
+      <section id="tab-metrics" class="tab"><h2>Metrics</h2></section>
+      <section id="tab-history" class="tab"><h2>History</h2></section>
+      <section id="tab-team" class="tab"><h2>Team</h2></section>
+      <section id="tab-settings" class="tab"><h2>Settings</h2></section>
+    </main>
+  </div>
+
+  <script src="./js/app.js"></script>
+</body>
+</html>
