@@ -1,364 +1,373 @@
-:root {
-  --bg: #edf0f6;
-  --surface: #ffffff;
-  --sidebar: #18212d;
-  --sidebar-text: #ffffff;
-  --text: #162032;
-  --muted: #6a7280;
-  --primary: #275df9;
-  --danger: #e6555f;
-  --border: #d2d7df;
+// js/app.js
+
+// hardcoded login
+const VALID_EMAIL = "htellez032003@gmail.com";
+const VALID_PASS = "Ltapparel040523";
+
+const loginScreen = document.getElementById("login-screen");
+const appShell = document.getElementById("app-shell");
+const loginBtn = document.getElementById("login-btn");
+const loginEmail = document.getElementById("login-email");
+const loginPassword = document.getElementById("login-password");
+const loginError = document.getElementById("login-error");
+
+const viewTitle = document.getElementById("view-title");
+const csvUpdated = document.getElementById("csv-updated");
+
+const ordersFile = document.getElementById("orders-file");
+const ordersFileName = document.getElementById("orders-file-name");
+const ordersTbody = document.getElementById("orders-tbody");
+const ordersSelectAll = document.getElementById("orders-select-all");
+
+const filterCustomer = document.getElementById("filter-customer");
+const filterCustName = document.getElementById("filter-custname");
+const filterShipper = document.getElementById("filter-shipper");
+const filterFrom = document.getElementById("filter-from");
+const filterTo = document.getElementById("filter-to");
+const filterApply = document.getElementById("filter-apply");
+const filterClear = document.getElementById("filter-clear");
+const selectedCount = document.getElementById("selected-count");
+const buildTruckloadBtn = document.getElementById("build-truckload");
+
+// modal
+const modalOverlay = document.getElementById("modal-overlay");
+const modalPoCount = document.getElementById("modal-po-count");
+const modalLoadId = document.getElementById("modal-load-id");
+const modalShipper = document.getElementById("modal-shipper");
+const modalLoadType = document.getElementById("modal-load-type");
+const modalPickupDate = document.getElementById("modal-pickup-date");
+const modalPickupWindow = document.getElementById("modal-pickup-window");
+const modalCancel = document.getElementById("modal-cancel");
+const modalSave = document.getElementById("modal-save");
+
+// settings
+const themeToggle = document.getElementById("theme-toggle");
+const langSelect = document.getElementById("lang-select");
+
+// global data
+let ORDERS = []; // normalized orders
+let FILTERED_ORDERS = [];
+let TRUCKLOADS = [];
+let HISTORY = [];
+
+// ------- LOGIN / PERSISTENCE -------
+
+function showApp() {
+  loginScreen.classList.add("hidden");
+  appShell.classList.remove("hidden");
 }
 
-[data-theme="dark"] {
-  --bg: #0f172a;
-  --surface: #1f2937;
-  --sidebar: #0f172a;
-  --sidebar-text: #ffffff;
-  --text: #e2e8f0;
-  --muted: #94a3b8;
-  --primary: #4f83ff;
-  --border: #334155;
+function doLogin() {
+  const email = loginEmail.value.trim();
+  const pass = loginPassword.value.trim();
+  if (email === VALID_EMAIL && pass === VALID_PASS) {
+    localStorage.setItem("ncdcLoggedIn", "1");
+    showApp();
+  } else {
+    loginError.classList.remove("hidden");
+  }
 }
 
-* {
-  box-sizing: border-box;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+loginBtn?.addEventListener("click", doLogin);
+loginPassword?.addEventListener("keypress", (e) => {
+  if (e.key === "Enter") doLogin();
+});
+
+// check persisted login
+if (localStorage.getItem("ncdcLoggedIn") === "1") {
+  showApp();
 }
 
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  min-height: 100vh;
+// ------- TABS -------
+document.querySelectorAll(".nav-link").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document
+      .querySelectorAll(".nav-link")
+      .forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+
+    const tab = btn.getAttribute("data-tab");
+    document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
+    document.getElementById(`view-${tab}`).classList.remove("hidden");
+    viewTitle.textContent = btn.textContent;
+  });
+});
+
+document.getElementById("logout-btn")?.addEventListener("click", () => {
+  localStorage.removeItem("ncdcLoggedIn");
+  loginScreen.classList.remove("hidden");
+  appShell.classList.add("hidden");
+});
+
+// ------- CSV PARSING -------
+
+// very simple CSV parser for your 40-column sheet
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length);
+  if (!lines.length) return [];
+  const headers = lines[0].split(",");
+  return lines.slice(1).map((line) => {
+    const parts = line.split(",");
+    const obj = {};
+    headers.forEach((h, idx) => {
+      obj[h.trim()] = (parts[idx] || "").trim();
+    });
+    return obj;
+  });
 }
 
-/* LOGIN */
-.login-screen {
-  position: fixed;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  background: linear-gradient(180deg, #e2e8f0 0%, #cbd5f5 100%);
+function normalizeOrder(row, idx) {
+  // use exactly the headers you gave me
+  return {
+    id: idx,
+    division: row["Division"] || "",
+    bol: row["BOL#"] || "",
+    masterBol: row["Master BOL#"] || "",
+    po: row["PO Num"] || "",
+    customer: row["Customer"] || "",
+    customerName: row["Cust Name"] || "",
+    shipper: row["Shipper"] || "",
+    ttlQty: row["TTL QTY"] || "",
+    ttlAmt: row["TTL Amt"] || "",
+    startDate: row["Start Date"] || "",
+    cancelDate: row["Cancel Date"] || "",
+    author: row["Author#"] || "",
+    status: "Unassigned",
+    loadId: ""
+  };
 }
 
-.login-card {
-  background: #fff;
-  padding: 1.75rem 2rem 1.5rem;
-  border-radius: 12px;
-  width: min(420px, 95vw);
-  box-shadow: 0 15px 45px rgba(15, 23, 42, 0.15);
+ordersFile?.addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  ordersFileName.textContent = file.name;
+  const reader = new FileReader();
+  reader.onload = (evt) => {
+    const txt = evt.target.result;
+    const rows = parseCSV(txt);
+    ORDERS = rows.map((r, i) => normalizeOrder(r, i));
+    FILTERED_ORDERS = [...ORDERS];
+    renderOrders();
+    csvUpdated.textContent =
+      "CSV updated: " + new Date().toLocaleString();
+  };
+  reader.readAsText(file);
+});
+
+// ------- RENDER ORDERS -------
+
+function renderOrders() {
+  ordersTbody.innerHTML = "";
+  FILTERED_ORDERS.forEach((ord) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><input type="checkbox" class="order-check" data-id="${ord.id}" /></td>
+      <td>${ord.po}</td>
+      <td>${ord.customer}</td>
+      <td>${ord.customerName}</td>
+      <td>${ord.shipper}</td>
+      <td>${ord.author}</td>
+      <td>${ord.ttlQty}</td>
+      <td>${ord.ttlAmt}</td>
+      <td>${ord.startDate}</td>
+      <td>${ord.cancelDate}</td>
+      <td><span class="status-pill ${ord.status === "Staging" ? "staging" : ""}">${ord.status}</span></td>
+      <td>${ord.loadId || ""}</td>
+    `;
+    ordersTbody.appendChild(tr);
+  });
+
+  attachOrderCheckboxEvents();
 }
 
-.login-header {
-  display: flex;
-  gap: 0.75rem;
-  align-items: center;
-  margin-bottom: 1rem;
+function attachOrderCheckboxEvents() {
+  document.querySelectorAll(".order-check").forEach((chk) => {
+    chk.addEventListener("change", updateSelectedCount);
+  });
 }
 
-.app-title {
-  margin: 0;
-  font-size: 1.15rem;
+function updateSelectedCount() {
+  const ids = getSelectedOrderIds();
+  selectedCount.textContent = ids.length;
 }
 
-.login-card label {
-  display: block;
-  font-size: 0.75rem;
-  margin-top: 0.5rem;
-  margin-bottom: 0.25rem;
-  color: #0f172a;
+function getSelectedOrderIds() {
+  const ids = [];
+  document.querySelectorAll(".order-check:checked").forEach((chk) => {
+    ids.push(Number(chk.getAttribute("data-id")));
+  });
+  return ids;
 }
 
-.login-card input {
-  width: 100%;
-  padding: 0.45rem 0.5rem;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
+// select all should respect filters
+ordersSelectAll?.addEventListener("change", (e) => {
+  const checked = e.target.checked;
+  document.querySelectorAll(".order-check").forEach((chk) => {
+    chk.checked = checked;
+  });
+  updateSelectedCount();
+});
+
+// filtering
+function applyFilters() {
+  const cust = filterCustomer.value.trim().toLowerCase();
+  const custName = filterCustName.value.trim().toLowerCase();
+  const ship = filterShipper.value.trim().toLowerCase();
+  const from = filterFrom.value;
+  const to = filterTo.value;
+
+  FILTERED_ORDERS = ORDERS.filter((o) => {
+    let ok = true;
+    if (cust && !o.customer.toLowerCase().includes(cust)) ok = false;
+    if (custName && !o.customerName.toLowerCase().includes(custName)) ok = false;
+    if (ship && !o.shipper.toLowerCase().includes(ship)) ok = false;
+
+    if (from) {
+      // compare as yyyy-mm-dd strings if order has startDate (already string)
+      // user said some dates were weird in old csv; here we just string compare
+      if (!o.startDate || o.startDate < from) ok = false;
+    }
+    if (to) {
+      if (!o.startDate || o.startDate > to) ok = false;
+    }
+
+    return ok;
+  });
+
+  renderOrders();
 }
 
-.error {
-  color: #b91c1c;
-  margin-top: 0.6rem;
-  font-size: 0.75rem;
+filterApply?.addEventListener("click", applyFilters);
+filterClear?.addEventListener("click", () => {
+  filterCustomer.value = "";
+  filterCustName.value = "";
+  filterShipper.value = "";
+  filterFrom.value = "";
+  filterTo.value = "";
+  FILTERED_ORDERS = [...ORDERS];
+  renderOrders();
+});
+
+// ------- BUILD TRUCKLOAD MODAL -------
+
+buildTruckloadBtn?.addEventListener("click", () => {
+  const ids = getSelectedOrderIds();
+  if (!ids.length) return;
+  modalPoCount.textContent = ids.length;
+  modalLoadId.value = "";
+  modalShipper.value = "";
+  modalPickupDate.value = "";
+  modalOverlay.classList.remove("hidden");
+});
+
+modalCancel?.addEventListener("click", () => {
+  modalOverlay.classList.add("hidden");
+});
+
+modalSave?.addEventListener("click", () => {
+  const ids = getSelectedOrderIds();
+  if (!ids.length) return;
+
+  const loadId =
+    modalLoadId.value.trim() ||
+    "LD-" + Math.random().toString(36).substring(2, 7).toUpperCase();
+  const shipper = modalShipper.value.trim();
+  const loadType = modalLoadType.value;
+  const pickupDate = modalPickupDate.value;
+  const pickupWindow = modalPickupWindow.value;
+
+  // update orders
+  ids.forEach((id) => {
+    const idx = ORDERS.findIndex((o) => o.id === id);
+    if (idx > -1) {
+      ORDERS[idx].status = "Staging";
+      ORDERS[idx].loadId = loadId;
+      ORDERS[idx].pickupDate = pickupDate;
+      ORDERS[idx].pickupWindow = pickupWindow;
+      if (shipper) ORDERS[idx].shipper = shipper;
+    }
+  });
+
+  // create truckload entry
+  TRUCKLOADS.push({
+    id: loadId,
+    shipper: shipper || guessCommonShipper(ids),
+    loadType,
+    pickupDate,
+    pickupWindow,
+    pos: ids.map((id) => ORDERS.find((o) => o.id === id)),
+  });
+
+  modalOverlay.classList.add("hidden");
+  applyFilters(); // re-render
+  renderTruckloads();
+});
+
+function guessCommonShipper(ids) {
+  if (!ids.length) return "";
+  const ships = ids.map((id) => {
+    const o = ORDERS.find((r) => r.id === id);
+    return o ? o.shipper : "";
+  });
+  return ships[0] || "";
 }
 
-.hidden {
-  display: none !important;
+// ------- RENDER TRUCKLOADS (simple) -------
+
+function renderTruckloads() {
+  const container = document.getElementById("truckloads-table");
+  if (!container) return;
+
+  if (!TRUCKLOADS.length) {
+    container.innerHTML = "<p class='muted tiny'>No truckloads yet.</p>";
+    return;
+  }
+
+  let html = `<table class="orders-table"><thead><tr>
+    <th>Load ID</th><th>Shipper</th><th>Type</th><th>Pickup Date</th><th>Window</th><th>PO Count</th>
+  </tr></thead><tbody>`;
+  TRUCKLOADS.forEach((tl) => {
+    html += `<tr>
+      <td>${tl.id}</td>
+      <td>${tl.shipper || ""}</td>
+      <td>${tl.loadType}</td>
+      <td>${tl.pickupDate || ""}</td>
+      <td>${tl.pickupWindow || ""}</td>
+      <td>${tl.pos.length}</td>
+    </tr>`;
+  });
+  html += `</tbody></table>`;
+  container.innerHTML = html;
 }
 
-/* APP */
-.app-shell {
-  display: flex;
-  min-height: 100vh;
+// ------- SETTINGS (dark mode + language) -------
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  document.body.setAttribute("data-theme", theme);
 }
 
-.sidebar {
-  width: 210px;
-  background: var(--sidebar);
-  color: var(--sidebar-text);
-  padding: 1.1rem 1rem 1rem;
+const savedTheme = localStorage.getItem("ncdcTheme");
+if (savedTheme) {
+  applyTheme(savedTheme);
+  if (savedTheme === "dark" && themeToggle) themeToggle.checked = true;
 }
 
-.sidebar-header {
-  display: flex;
-  gap: 0.6rem;
-  align-items: center;
-  margin-bottom: 1rem;
+const savedLang = localStorage.getItem("ncdcLang");
+if (savedLang && langSelect) {
+  langSelect.value = savedLang;
 }
 
-.logo-box {
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
-  background: #ffffff;
-  color: #18212d;
-  display: grid;
-  place-items: center;
-  font-weight: 700;
-}
+themeToggle?.addEventListener("change", (e) => {
+  const useDark = e.target.checked;
+  applyTheme(useDark ? "dark" : "light");
+  localStorage.setItem("ncdcTheme", useDark ? "dark" : "light");
+});
 
-.logo-box.small {
-  width: 38px;
-  height: 38px;
-}
+langSelect?.addEventListener("change", (e) => {
+  localStorage.setItem("ncdcLang", e.target.value);
+});
 
-.sidebar-title {
-  font-weight: 600;
-  font-size: 0.95rem;
-}
-
-.sidebar-sub {
-  font-size: 0.68rem;
-  opacity: 0.8;
-}
-
-.nav-link {
-  width: 100%;
-  background: transparent;
-  border: none;
-  color: inherit;
-  text-align: left;
-  padding: 0.45rem 0.5rem;
-  border-radius: 6px;
-  font-size: 0.78rem;
-  cursor: pointer;
-  margin-bottom: 0.25rem;
-}
-
-.nav-link.active,
-.nav-link:hover {
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.btn {
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.btn.small {
-  font-size: 0.7rem;
-  padding: 0.35rem 0.6rem;
-}
-
-.btn.primary {
-  background: var(--primary);
-  color: #fff;
-}
-
-.btn.secondary {
-  background: rgba(255, 255, 255, 0.08);
-  color: inherit;
-}
-
-.btn.secondary.small {
-  margin-top: 1rem;
-  width: 100%;
-}
-
-.main {
-  flex: 1;
-  padding: 1.1rem 1.25rem 1.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.topbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 1rem 1rem 1.1rem;
-  margin-bottom: 0.5rem;
-}
-
-.muted {
-  color: var(--muted);
-  font-size: 0.75rem;
-}
-
-.tiny {
-  font-size: 0.68rem;
-}
-
-/* ORDERS TABLE */
-.orders-table-wrapper {
-  max-height: 360px; /* quarter-ish screen */
-  overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
-
-.orders-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.7rem;
-}
-
-.orders-table th,
-.orders-table td {
-  padding: 0.35rem 0.4rem;
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-
-.orders-table thead {
-  background: rgba(0, 0, 0, 0.015);
-  position: sticky;
-  top: 0;
-  z-index: 1;
-}
-
-.status-pill {
-  display: inline-block;
-  padding: 0.2rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.6rem;
-  background: #fee2e2;
-  color: #b91c1c;
-}
-
-.status-pill.staging {
-  background: #dbeafe;
-  color: #1d4ed8;
-}
-
-.status-pill.ready {
-  background: #dcfce7;
-  color: #15803d;
-}
-
-.upload-row {
-  display: flex;
-  gap: 0.75rem;
-  align-items: center;
-  margin-top: 0.5rem;
-}
-
-.file-label input {
-  display: inline-block;
-}
-
-.filters-row {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  margin-top: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.filters-row input,
-.filters-row select {
-  padding: 0.3rem 0.35rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 0.7rem;
-}
-
-.selected-pos {
-  font-size: 0.7rem;
-}
-
-/* CALENDAR placeholder */
-.calendar {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(55px, 1fr));
-  gap: 0.35rem;
-  margin-top: 0.6rem;
-}
-
-.calendar div {
-  background: rgba(39, 93, 249, 0.04);
-  border: 1px solid rgba(39, 93, 249, 0.08);
-  border-radius: 6px;
-  min-height: 46px;
-  font-size: 0.7rem;
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-}
-
-.calendar div.active-day {
-  background: rgba(39, 93, 249, 0.18);
-  border-color: rgba(39, 93, 249, 0.4);
-  color: #0f172a;
-}
-
-/* MODAL */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.55);
-  display: grid;
-  place-items: center;
-}
-
-.modal {
-  background: var(--surface);
-  padding: 1rem 1.1rem;
-  border-radius: 12px;
-  width: min(380px, 96vw);
-  border: 1px solid var(--border);
-}
-
-.modal label {
-  display: block;
-  font-size: 0.68rem;
-  margin-top: 0.45rem;
-}
-
-.modal input,
-.modal select {
-  width: 100%;
-  padding: 0.3rem 0.35rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 0.7rem;
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.4rem;
-  margin-top: 0.6rem;
-}
-
-/* SETTINGS */
-.settings-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.6rem;
-}
-
-/* DARK */
-body[data-theme="dark"] .card {
-  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.05);
-}
+// initial render (empty)
+renderOrders();
+renderTruckloads();
