@@ -1,21 +1,33 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>NCDC Shipping Dashboard - Login</title>
-  <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <title>NCDC Shipping Dashboard – Sign in</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="./style.css" />
 </head>
-<body class="light-mode">
-  <div class="login-container">
-    <img src="assets/logo-ncdc.png" alt="NCDC Logo" class="logo">
-    <h1>NCDC Shipping Dashboard</h1>
-    <form id="loginForm">
-      <input type="text" id="username" placeholder="Username" required>
-      <input type="password" id="password" placeholder="Password" required>
-      <button type="submit">Sign In</button>
-    </form>
+<body id="login-page">
+  <div class="login-shell">
+    <div class="login-card">
+      <div class="login-logo">
+        <img src="./assets/ncdc-logo.png" alt="NCDC Logo" onerror="this.style.display='none'">
+        <h1>NCDC Shipping Dashboard</h1>
+        <p class="muted">Internal Scheduling & Dock Control</p>
+      </div>
+      <form id="login-form">
+        <label>Email</label>
+        <input id="login-email" type="email" placeholder="you@example.com" required />
+        <label>Password</label>
+        <input id="login-password" type="password" placeholder="••••••••" required />
+        <button type="submit" class="btn primary full">Sign In</button>
+      </form>
+      <p id="login-error" class="error hidden">Invalid credentials.</p>
+      <p class="muted small">
+        Owner / admin login (current): <strong>htellez032003@gmail.com</strong> / <strong>Ltapparel040523</strong>
+      </p>
+    </div>
   </div>
-  <script src="script.js"></script>
+
+  <script src="./script.js"></script>
 </body>
 </html>
