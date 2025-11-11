@@ -1,799 +1,467 @@
-// =============== GLOBAL STATE ===============
-const OWNER_EMAIL = "htellez032003@gmail.com";
-const OWNER_PASS = "Ltapparel040523";
+// js/app.js
 
-let currentUser = null;             // {email, role}
-let ordersData = [];                // raw orders from CSV
-let filteredOrders = [];            // filtered for Orders tab
-let truckloads = [];                // built truckloads
-let departedLoads = [];             // history
-let dockAssignments = [];           // for dock tab
-let slotCapacities = {};            // editable in settings
-let languagePref = "en";
-let darkModePref = false;
+// ---------- GLOBAL STATE ----------
+let ORDERS = [];            // all rows from latest CSV
+let FILTERED = [];          // filtered view
+let TRUCKLOADS = [];        // built truckloads (local only)
+let HISTORY = [];           // departed loads
+let STAGING = [];           // dock view
+let METRICS = [];           // accumulated metrics rows
 
-// your 6 fixed pickup windows
-const PICKUP_WINDOWS = [
-  "08:00am-10:00am",
-  "10:00am-12:00pm",
-  "01:00pm-03:00pm",
-  "05:00pm-07:00pm",
-  "08:00pm-10:00pm",
-  "10:00pm-12:00am",
-];
+const LOGIN_EMAIL = "htellez032003@gmail.com";
+const LOGIN_PASS = "Ltapparel040523";
 
-// LTL-only carriers list
-const LTL_ALWAYS = [
-  "AAC","ABC","ABF","ABM","ABN","AF1","AVE","AVT","CEN","CIS","CNW","FFA",
-  "FFE","FXX","HCL","HER","ODF","OLD","RLC","SAI","SMF","TFO","UPA","UPF","XL1","XLC","XPO"
-];
+// ---------- HELPERS ----------
+function $(sel) { return document.querySelector(sel); }
+function $all(sel) { return document.querySelectorAll(sel); }
 
-// long shipper list: user gave huge list; here we store minimally as strings (code + name)
-// for brevity we can store it later — but user said "use entire shipper list"; placeholder:
-const SHIPPER_LIST = []; // we leave blank; user will upload / extend later
-
-// =============== INIT BRANCHING ===============
-document.addEventListener("DOMContentLoaded", () => {
-  const isLoginPage = !!document.getElementById("loginForm");
-  if (isLoginPage) {
-    initLoginPage();
-  } else {
-    initDashboardPage();
+function toDate(val) {
+  if (!val) return "";
+  // if it looks like an excel serial
+  if (!isNaN(val) && Number(val) > 30000) {
+    const d = new Date(1899, 11, 30);
+    d.setDate(d.getDate() + Number(val));
+    return d.toISOString().slice(0,10);
   }
-});
+  // try normal date
+  const d = new Date(val);
+  if (!isNaN(d)) return d.toISOString().slice(0,10);
+  return val;
+}
 
-// =============== LOGIN PAGE ===============
-function initLoginPage() {
-  const loginForm = document.getElementById("loginForm");
-  const loginError = document.getElementById("loginError");
+function formatMoney(v) {
+  if (v === "" || v == null) return "$0";
+  const num = Number(String(v).replace(/[^0-9.-]/g,""));
+  if (isNaN(num)) return "$0";
+  return "$" + num.toLocaleString();
+}
 
-  // if already logged in
-  const saved = localStorage.getItem("ncdc_user");
-  if (saved) {
-    window.location.href = "dashboard.html";
-    return;
+// ---------- LOGIN ----------
+function initLogin() {
+  const cached = localStorage.getItem("ncdc-auth");
+  if (cached === "true") {
+    $("#login-screen").classList.add("hidden");
+    $("#app-shell").classList.remove("hidden");
+    applyTheme(localStorage.getItem("ncdc-theme") || "light");
+    renderAll();
   }
 
-  loginForm.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const email = document.getElementById("loginEmail").value.trim();
-    const pass = document.getElementById("loginPassword").value.trim();
-    if (email === OWNER_EMAIL && pass === OWNER_PASS) {
-      const userObj = { email, role: "owner" };
-      localStorage.setItem("ncdc_user", JSON.stringify(userObj));
-      window.location.href = "dashboard.html";
+  $("#login-btn").addEventListener("click", () => {
+    const email = $("#login-email").value.trim();
+    const pass = $("#login-password").value.trim();
+    if (email === LOGIN_EMAIL && pass === LOGIN_PASS) {
+      localStorage.setItem("ncdc-auth", "true");
+      $("#login-screen").classList.add("hidden");
+      $("#app-shell").classList.remove("hidden");
+      renderAll();
     } else {
-      loginError.classList.remove("hidden");
+      $("#login-error").classList.remove("hidden");
     }
   });
+
+  $("#logout-btn").addEventListener("click", () => {
+    localStorage.removeItem("ncdc-auth");
+    location.reload();
+  });
 }
 
-// =============== DASHBOARD PAGE ===============
-function initDashboardPage() {
-  // guard
-  const saved = localStorage.getItem("ncdc_user");
-  if (!saved) {
-    window.location.href = "index.html";
-    return;
-  }
-  currentUser = JSON.parse(saved);
+// ---------- THEME & SETTINGS ----------
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem("ncdc-theme", theme);
+  $("#setting-theme").value = theme;
+}
 
-  // init prefs
-  const savedPrefs = JSON.parse(localStorage.getItem("ncdc_prefs") || "{}");
-  languagePref = savedPrefs.language || "en";
-  darkModePref = !!savedPrefs.darkMode;
+function initSettings() {
+  // theme
+  const storedTheme = localStorage.getItem("ncdc-theme") || "light";
+  applyTheme(storedTheme);
 
-  applyTheme(darkModePref);
-  updateTopbarPrefs();
-
-  // elements
-  const logoutBtn = document.getElementById("logoutBtn");
-  logoutBtn.addEventListener("click", () => {
-    localStorage.removeItem("ncdc_user");
-    window.location.href = "index.html";
+  $("#setting-theme").addEventListener("change", (e) => {
+    applyTheme(e.target.value);
   });
 
-  // nav tabs
-  document.querySelectorAll(".nav-item").forEach(btn => {
+  // language, just store
+  $("#setting-lang").addEventListener("change", (e) => {
+    localStorage.setItem("ncdc-lang", e.target.value);
+  });
+
+  $("#clear-local").addEventListener("click", () => {
+    localStorage.removeItem("ncdc-orders");
+    localStorage.removeItem("ncdc-metrics");
+    alert("Local data cleared. Upload a CSV again.");
+  });
+}
+
+// ---------- TABS ----------
+function initTabs() {
+  $all(".nav-link").forEach(btn => {
     btn.addEventListener("click", () => {
-      document.querySelectorAll(".nav-item").forEach(b => b.classList.remove("active"));
+      const tab = btn.dataset.tab;
+      $all(".nav-link").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
-      const tabId = btn.getAttribute("data-tab");
-      showTab(tabId);
+      $all(".tab").forEach(t => t.classList.remove("active"));
+      $("#tab-" + tab).classList.add("active");
+      if (tab === "metrics") drawMetricsChart("month");
     });
   });
 
-  // file upload
-  const csvUpload = document.getElementById("csvUpload");
-  if (csvUpload) {
-    csvUpload.addEventListener("change", handleCsvUpload);
-  }
-
-  // filters
-  setupOrderFilters();
-
-  // create truckload
-  const createBtn = document.getElementById("createTruckloadBtn");
-  if (createBtn) createBtn.addEventListener("click", openTruckloadModalFromSelected);
-
-  // modal buttons
-  const closeTl = document.getElementById("closeTruckloadModal");
-  const saveTl = document.getElementById("saveTruckloadBtn");
-  if (closeTl) closeTl.addEventListener("click", () => toggleTruckloadModal(false));
-  if (saveTl) saveTl.addEventListener("click", saveTruckloadFromModal);
-
-  // settings
-  const darkToggle = document.getElementById("darkModeToggle");
-  const langSelect = document.getElementById("languageSelect");
-  if (darkToggle) {
-    darkToggle.checked = darkModePref;
-    darkToggle.addEventListener("change", () => {
-      darkModePref = darkToggle.checked;
-      savePrefs();
-      applyTheme(darkModePref);
-      updateTopbarPrefs();
+  // default metrics range
+  $all(".metric-range").forEach(btn => {
+    btn.addEventListener("click", () => {
+      $all(".metric-range").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      drawMetricsChart(btn.dataset.range);
     });
-  }
-  if (langSelect) {
-    langSelect.value = languagePref;
-    langSelect.addEventListener("change", () => {
-      languagePref = langSelect.value;
-      savePrefs();
-      updateTopbarPrefs();
-    });
-  }
-
-  // capacities
-  buildSlotCapacityInputs();
-
-  // export metrics
-  const exportBtn = document.getElementById("exportMetricsBtn");
-  if (exportBtn) {
-    exportBtn.addEventListener("click", exportMetricsCsv);
-  }
-
-  // initial render
-  document.getElementById("currentUserRole").textContent = currentUser.role === "owner" ? "Owner" : currentUser.role;
-  showTab("ordersTab");
-  renderOrdersTable();
-  renderCalendar();
-  renderDockTab();
-  renderTodayTab();
-  renderTruckloadsTab();
-  renderMetricsTab();
-  renderHistoryTab();
-  renderTeamTab();
+  });
 }
 
-// =============== TABS ===============
-function showTab(tabId) {
-  document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
-  document.getElementById(tabId).classList.add("active");
-  const topbarTitle = document.getElementById("topbarTitle");
-  if (topbarTitle) {
-    topbarTitle.textContent = tabIdName(tabId);
-  }
-}
-
-function tabIdName(id) {
-  switch (id) {
-    case "ordersTab": return "Orders";
-    case "dockTab": return "Dock";
-    case "todayTab": return "Today's Pick Ups";
-    case "truckloadsTab": return "Truckloads";
-    case "metricsTab": return "Metrics";
-    case "historyTab": return "History";
-    case "teamTab": return "Team";
-    case "settingsTab": return "Settings";
-    default: return "NCDC Dashboard";
-  }
-}
-
-// =============== CSV UPLOAD & PARSE ===============
-// new header set you provided
-const EXPECTED_HEADERS = [
-  "Division","BOL#","Master BOL#","PO Num","Wave#","Wave Creation Date","Wave Type",
-  "# of Pk Tks","Remaining Pk Tks","Pick#","Latest Tote Time","Order Type","Customer","Cust Name",
-  "Shipper","Store","Center","TTL QTY","TTL Amt","Packed %","Palletized %","Label Printed %",
-  "Carton Confirmed","Accusort","SortDirector","Pallet Location","Total Weight","Total Cubic",
-  "Est. Cartons","Est. Pallet","Pick Proc Date","Start Date","Cancel Date","Router",
-  "Route Date","Scheduled Date","Ready Date","Ready Time","Author#","PT STATUS"
-];
-
-function handleCsvUpload(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (evt) => {
-    const text = evt.target.result;
-    const parsed = parseCsv(text);
-    ordersData = normalizeOrders(parsed);
-    filteredOrders = [...ordersData];
-    renderOrdersTable();
-    renderCalendar();
-    updateLastCsvStamp();
-  };
-  reader.readAsText(file);
-}
-
-function parseCsv(text) {
-  const lines = text.replace(/\r/g, "").split("\n").filter(l => l.trim() !== "");
-  const headerLine = lines[0];
-  const headers = headerLine.split(",").map(h => h.trim());
+// ---------- CSV UPLOAD ----------
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim() !== "");
+  if (!lines.length) return [];
+  const headers = lines[0].split(",").map(h => h.trim());
   const rows = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(","); // simple split; your sheet already worked earlier
-    const obj = {};
-    headers.forEach((h, idx) => {
-      obj[h] = (cols[idx] || "").trim();
+  for (let i=1; i<lines.length; i++) {
+    const cols = lines[i].split(","); // simple for now
+    const row = {};
+    headers.forEach((h,idx) => {
+      row[h] = cols[idx] ? cols[idx].trim() : "";
     });
-    rows.push(obj);
+    rows.push(row);
   }
   return rows;
 }
 
-// convert into consistent fields
 function normalizeOrders(rows) {
+  // your new headers:
+  // Division, BOL#, Master BOL#, PO Num, ... , TTL QTY, TTL Amt, ... , Start Date, Cancel Date, Author#
   return rows.map(r => {
-    // fix numbers to actual numbers, but keep strings if missing
-    const ttlQty = toNumberSafe(r["TTL QTY"]);
-    const ttlAmt = toNumberSafe(r["TTL Amt"]);
-    // scheduled date should be plain string
-    const schedDate = r["Scheduled Date"] || r["Ready Date"] || "";
+    const start = toDate(r["Start Date"]);
+    const cancel = toDate(r["Cancel Date"]);
     return {
-      ...r,
-      __po: r["PO Num"] || "",
-      __customer: r["Customer"] || "",
-      __custName: r["Cust Name"] || "",
-      __shipper: r["Shipper"] || "",
-      __sched: schedDate,
-      __qty: ttlQty,
-      __amt: ttlAmt,
-      __author: r["Author#"] || "",
-      __window: "", // will be filled when assigned
-      __status: "Pending", // default
-      __stagedLocation: "",
-      __palletCount: "",
-      __routerNotes: ""
+      division: r["Division"] || "",
+      bol: r["BOL#"] || "",
+      mbol: r["Master BOL#"] || "",
+      po: r["PO Num"] || "",
+      customer: r["Customer"] || "",
+      custname: r["Cust Name"] || "",
+      shipper: r["Shipper"] || "",
+      ttlqty: Number(r["TTL QTY"] || 0),
+      ttlamt: formatMoney(r["TTL Amt"] || 0),
+      startDate: start,
+      cancelDate: cancel,
+      author: r["Author#"] || "",
+      status: "Unassigned",
+      loadId: ""
     };
   });
 }
 
-function toNumberSafe(v) {
-  if (!v) return 0;
-  // sometimes excel dates become decimals - we treat non-numeric as 0
-  const num = Number(v);
-  if (Number.isNaN(num)) return 0;
-  return num;
-}
+function initCSVUpload() {
+  const input = $("#orders-file");
+  input.addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const csvText = ev.target.result;
+      const raw = parseCSV(csvText);
+      ORDERS = normalizeOrders(raw);
+      FILTERED = [...ORDERS];
+      localStorage.setItem("ncdc-orders", JSON.stringify(ORDERS));
+      $("#csv-updated").textContent = "CSV updated: " + new Date().toLocaleString();
+      renderOrders();
+      seedMetricsFromOrders();
+    };
+    reader.readAsText(file);
+  });
 
-function updateLastCsvStamp() {
-  const el = document.getElementById("lastCsvStamp");
-  if (el) {
-    el.textContent = "CSV: " + new Date().toLocaleString();
+  // reload from local
+  const cached = localStorage.getItem("ncdc-orders");
+  if (cached) {
+    ORDERS = JSON.parse(cached);
+    FILTERED = [...ORDERS];
+    renderOrders();
   }
 }
 
-// =============== ORDERS TABLE RENDER ===============
-function renderOrdersTable() {
-  const tbody = document.getElementById("ordersTbody");
-  if (!tbody) return;
-  tbody.innerHTML = "";
-
-  filteredOrders.forEach((o, idx) => {
+// ---------- ORDERS RENDER ----------
+function renderOrders() {
+  const body = $("#orders-body");
+  body.innerHTML = "";
+  FILTERED.forEach((o,idx) => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td><input type="checkbox" class="order-select" data-po="${o.__po}" /></td>
-      <td>${o.__po}</td>
-      <td>${o.__customer}</td>
-      <td>${o.__custName}</td>
-      <td>${o.__shipper}</td>
-      <td>${o.__qty}</td>
-      <td>${o.__amt}</td>
-      <td>${o.__sched}</td>
-      <td>${o.__window || ""}</td>
-      <td>${o.__author}</td>
-      <td>${o.__status}</td>
+      <td><input type="checkbox" class="row-check" data-idx="${idx}"></td>
+      <td>${o.po}</td>
+      <td>${o.customer}</td>
+      <td>${o.custname}</td>
+      <td>${o.shipper}</td>
+      <td>${o.author}</td>
+      <td>${o.ttlqty}</td>
+      <td>${o.ttlamt}</td>
+      <td>${o.startDate}</td>
+      <td>${o.cancelDate}</td>
+      <td><span class="status-pill status-${o.status.toLowerCase()}">${o.status}</span></td>
+      <td>${o.loadId || ""}</td>
     `;
-    tbody.appendChild(tr);
+    body.appendChild(tr);
   });
 
-  // select all should select only filtered
-  const selectAll = document.getElementById("selectAllOrders");
-  if (selectAll) {
-    selectAll.checked = false;
-    selectAll.onclick = () => {
-      const checks = tbody.querySelectorAll(".order-select");
-      checks.forEach(c => c.checked = selectAll.checked);
-    };
-  }
+  // select-all respects filters
+  $("#select-all").checked = false;
+  updateSelectedCount();
+  $all(".row-check").forEach(cb => cb.addEventListener("change", updateSelectedCount));
+
+  renderCalendar();
 }
 
-// =============== ORDER FILTERS ===============
-function setupOrderFilters() {
-  const po = document.getElementById("filterPO");
-  const customer = document.getElementById("filterCustomer");
-  const custName = document.getElementById("filterCustName");
-  const shipper = document.getElementById("filterShipper");
-  const date = document.getElementById("filterDate");
-  const clear = document.getElementById("clearFiltersBtn");
+function updateSelectedCount() {
+  const count = $all(".row-check:checked").length;
+  $("#selected-count").textContent = "Selected POs: " + count;
+}
 
-  const handler = () => {
-    filteredOrders = ordersData.filter(o => {
-      if (po.value && !o.__po.toLowerCase().includes(po.value.toLowerCase())) return false;
-      if (customer.value && !o.__customer.toLowerCase().includes(customer.value.toLowerCase())) return false;
-      if (custName.value && !o.__custName.toLowerCase().includes(custName.value.toLowerCase())) return false;
-      if (shipper.value && !o.__shipper.toLowerCase().includes(shipper.value.toLowerCase())) return false;
-      if (date.value && (o.__sched || "").slice(0,10) !== date.value) return false;
-      return true;
+// ---------- FILTERS ----------
+function initFilters() {
+  $("#filter-apply").addEventListener("click", () => {
+    const cust = $("#filter-customer").value.trim().toLowerCase();
+    const cname = $("#filter-custname").value.trim().toLowerCase();
+    const ship = $("#filter-shipper").value.trim().toLowerCase();
+    const from = $("#filter-from").value;
+    const to = $("#filter-to").value;
+
+    FILTERED = ORDERS.filter(o => {
+      let ok = true;
+      if (cust && !o.customer.toLowerCase().includes(cust)) ok = false;
+      if (cname && !o.custname.toLowerCase().includes(cname)) ok = false;
+      if (ship && !o.shipper.toLowerCase().includes(ship)) ok = false;
+      if (from && o.startDate && o.startDate < from) ok = false;
+      if (to && o.startDate && o.startDate > to) ok = false;
+      return ok;
     });
-    renderOrdersTable();
-  };
-
-  [po, customer, custName, shipper, date].forEach(input => {
-    if (input) input.addEventListener("input", handler);
+    renderOrders();
   });
-  if (clear) {
-    clear.addEventListener("click", () => {
-      [po, customer, custName, shipper, date].forEach(i => i.value = "");
-      filteredOrders = [...ordersData];
-      renderOrdersTable();
-    });
-  }
+
+  $("#filter-clear").addEventListener("click", () => {
+    $("#filter-customer").value = "";
+    $("#filter-custname").value = "";
+    $("#filter-shipper").value = "";
+    $("#filter-from").value = "";
+    $("#filter-to").value = "";
+    FILTERED = [...ORDERS];
+    renderOrders();
+  });
+
+  // select-all limited to filtered
+  $("#select-all").addEventListener("change", (e) => {
+    const checked = e.target.checked;
+    $all(".row-check").forEach(cb => cb.checked = checked);
+    updateSelectedCount();
+  });
 }
 
-// =============== CALENDAR (NOT AFFECTED BY FILTERS) ===============
+// ---------- CALENDAR ----------
+const FIXED_TIME_SLOTS = [
+  "08:00am-10:00am",
+  "10:00am-12:00pm",
+  "01:00pm-03:00pm",
+  "5:00pm-7:00pm",
+  "8:00pm-10:00pm",
+  "10:00pm-12:00am"
+];
+
 function renderCalendar() {
-  const cal = document.getElementById("calendarContainer");
-  if (!cal) return;
+  const cal = $("#orders-calendar");
   cal.innerHTML = "";
-
-  // simple current month calendar
-  const base = new Date();
-  const year = base.getFullYear();
-  const month = base.getMonth();
-
-  // build days
-  const firstDay = new Date(year, month, 1);
-  const lastDay = new Date(year, month + 1, 0);
-  const startWeekday = firstDay.getDay();
-  const totalDays = lastDay.getDate();
-
-  // fill blanks
-  for (let i = 0; i < startWeekday; i++) {
-    const div = document.createElement("div");
-    cal.appendChild(div);
-  }
-
-  for (let d = 1; d <= totalDays; d++) {
-    const dateStr = `${year}-${String(month+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
-    const dayOrders = ordersData.filter(o => (o.__sched || "").startsWith(dateStr));
+  // show 14-day window
+  const today = new Date();
+  for (let i=0; i<14; i++) {
+    const d = new Date(today);
+    d.setDate(today.getDate() + i);
+    const label = d.toISOString().slice(0,10);
     const div = document.createElement("div");
     div.className = "calendar-day";
-    div.innerHTML = `
-      <div class="calendar-day-header">${d}</div>
-      <div class="muted-text">${dayOrders.length} pickups</div>
-    `;
-    div.addEventListener("click", () => showSlotSummaryForDate(dateStr));
+    div.textContent = label;
+    div.dataset.date = label;
+    div.addEventListener("click", () => showCalendarSlots(label));
     cal.appendChild(div);
   }
 }
 
-function showSlotSummaryForDate(dateStr) {
-  const el = document.getElementById("calendarSlotSummary");
-  if (!el) return;
-  // group by window + load type rules (LTL carriers rolled into 1 truck)
-  const dayOrders = ordersData.filter(o => (o.__sched || "").startsWith(dateStr));
-  // build slots
-  const bySlot = {};
-  PICKUP_WINDOWS.forEach(w => {
-    bySlot[w] = {
-      LTL: 0,
-      "Truck Load": 0,
-      "Floor Load": 0
-    };
-  });
-  dayOrders.forEach(o => {
-    // window is currently not from CSV, but from truck creation, so might be blank
-    const win = o.__window || "08:00am-10:00am";
-    if (!bySlot[win]) {
-      bySlot[win] = { LTL:0, "Truck Load":0, "Floor Load":0 };
+function showCalendarSlots(dateStr) {
+  // count orders on that date
+  const onDay = ORDERS.filter(o => o.startDate === dateStr);
+  // basic capacity demo: just show how many loads per slot
+  const summary = FIXED_TIME_SLOTS.map(slot => {
+    // for now, show "available"
+    return `${slot}: available`;
+  }).join(" • ");
+  $("#calendar-slot-summary").textContent = `Pickups on ${dateStr}: ${onDay.length} • ${summary}`;
+}
+
+// ---------- BUILD TRUCKLOAD ----------
+function initBuildTruckload() {
+  $("#build-truckload").addEventListener("click", () => {
+    const selected = [];
+    $all(".row-check:checked").forEach(cb => {
+      const idx = Number(cb.dataset.idx);
+      selected.push(FILTERED[idx]);
+    });
+    if (!selected.length) {
+      alert("Select at least one PO.");
+      return;
     }
-    // decide load type by shipper
-    const loadType = LTL_ALWAYS.includes(o.__shipper) ? "LTL" : "Truck Load";
-    bySlot[win][loadType] += 1;
-  });
-
-  let html = `<strong>${dateStr}</strong> – Slot usage<br/>`;
-  Object.entries(bySlot).forEach(([slot, vals]) => {
-    html += `${slot}: LTL ${vals.LTL} | TL ${vals["Truck Load"]} | Floor ${vals["Floor Load"]}<br/>`;
-  });
-  el.innerHTML = html;
-}
-
-// =============== TRUCKLOAD MODAL ===============
-function openTruckloadModalFromSelected() {
-  const selectedPOs = getSelectedPOs();
-  if (selectedPOs.length === 0) {
-    alert("Select at least one PO to build a truckload.");
-    return;
-  }
-  // store in window temp
-  window.__selectedPOs = selectedPOs;
-  toggleTruckloadModal(true);
-}
-
-function toggleTruckloadModal(show) {
-  const modal = document.getElementById("truckloadModal");
-  if (!modal) return;
-  modal.classList.toggle("hidden", !show);
-}
-
-function getSelectedPOs() {
-  const checks = document.querySelectorAll("#ordersTbody .order-select:checked");
-  const arr = [];
-  checks.forEach(c => {
-    const po = c.getAttribute("data-po");
-    const order = ordersData.find(o => o.__po === po);
-    if (order) arr.push(order);
-  });
-  return arr;
-}
-
-function saveTruckloadFromModal() {
-  const pickupDate = document.getElementById("tlPickupDate").value;
-  const pickupWindow = document.getElementById("tlPickupWindow").value;
-  const shipper = document.getElementById("tlShipper").value;
-  const comments = document.getElementById("tlComments").value;
-  const warnEl = document.getElementById("tlCapacityWarning");
-
-  const selected = window.__selectedPOs || [];
-  if (!pickupDate || !pickupWindow || selected.length === 0) {
-    warnEl.textContent = "Date, window, and orders are required.";
-    warnEl.classList.remove("hidden");
-    return;
-  }
-
-  // capacity check simple
-  const cap = slotCapacities[pickupWindow] || { LTL: 4, "Truck Load": 4, "Floor Load": 4 };
-  const loadType = (shipper && LTL_ALWAYS.includes(shipper)) ? "LTL" : "Truck Load";
-  // count existing truckloads in same slot
-  const existingCount = truckloads.filter(t => t.pickupDate === pickupDate && t.pickupWindow === pickupWindow && t.loadType === loadType).length;
-  if (existingCount >= (cap[loadType] || 0)) {
-    warnEl.textContent = "Slot is full. Saving will exceed capacity.";
-    warnEl.classList.remove("hidden");
-  } else {
-    warnEl.classList.add("hidden");
-  }
-
-  const loadId = "TL-" + Date.now();
-  const totalQty = selected.reduce((sum, o) => sum + (o.__qty || 0), 0);
-  const totalAmt = selected.reduce((sum, o) => sum + (o.__amt || 0), 0);
-
-  // update orders with window and load id
-  selected.forEach(o => {
-    o.__window = pickupWindow;
-    o.__sched = pickupDate;
-    o.__status = "Assigned";
-    o.__routerNotes = comments;
-    o.__loadId = loadId;
-  });
-
-  truckloads.push({
-    loadId,
-    pickupDate,
-    pickupWindow,
-    shipper,
-    loadType,
-    comments,
-    orders: selected.map(o => o.__po),
-    totalQty,
-    totalAmt,
-    status: "Scheduled"
-  });
-
-  renderOrdersTable();
-  renderTruckloadsTab();
-  renderDockTab();
-  renderTodayTab();
-  toggleTruckloadModal(false);
-}
-
-// =============== DOCK TAB RENDER ===============
-function renderDockTab() {
-  const tbody = document.getElementById("dockTbody");
-  const summaryRow = document.getElementById("dockSummaryRow");
-  if (!tbody || !summaryRow) return;
-  tbody.innerHTML = "";
-  summaryRow.innerHTML = "";
-
-  // show all truckloads that are scheduled today or assigned
-  const rows = truckloads.map(tl => {
-    return {
-      loadId: tl.loadId,
-      pickupWindow: tl.pickupWindow,
-      pickupDate: tl.pickupDate,
-      shipper: tl.shipper,
-      totalCartons: tl.totalQty,
-      stagedLocation: "",
-      assignedTo: "",
-      arrival: "",
-      departure: ""
+    // create TL object
+    const loadId = "TL-" + (TRUCKLOADS.length + 1).toString().padStart(3,"0");
+    const shipper = selected[0].shipper || "TBD";
+    const date = selected[0].startDate || new Date().toISOString().slice(0,10);
+    const tl = {
+      id: loadId,
+      shipper,
+      date,
+      status: "Scheduled",
+      orders: selected.map(o => o.po),
+      ttlQty: selected.reduce((a,b) => a + Number(b.ttlqty || 0), 0),
+      ttlAmt: "$" + selected.reduce((a,b) => a + Number(String(b.ttlamt).replace(/[^0-9.-]/g,"")) ,0),
     };
-  });
-
-  let totalTrucks = rows.length;
-  let totalCartons = rows.reduce((s, r) => s + (r.totalCartons || 0), 0);
-
-  summaryRow.innerHTML = `
-    <div class="summary-pill">Trucks: ${totalTrucks}</div>
-    <div class="summary-pill">Cartons: ${totalCartons}</div>
-  `;
-
-  rows.forEach(r => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${r.loadId}</td>
-      <td><!-- BOL placeholder --></td>
-      <td><!-- Customer --></td>
-      <td>${r.pickupWindow}</td>
-      <td>${r.shipper}</td>
-      <td><input data-load="${r.loadId}" class="dock-input" placeholder="#" /></td>
-      <td>${r.totalCartons}</td>
-      <td><input data-load="${r.loadId}" class="dock-input" placeholder="Location" /></td>
-      <td><input data-load="${r.loadId}" class="dock-input" placeholder="Assign name" /></td>
-      <td><button class="btn-secondary small" onclick="markArrival('${r.loadId}')">Arrived</button></td>
-      <td><button class="btn-secondary small" onclick="markDeparture('${r.loadId}')">Departed</button></td>
-      <td><button class="btn-secondary small">View</button></td>
-    `;
-    tbody.appendChild(tr);
+    TRUCKLOADS.push(tl);
+    // update orders to show load
+    selected.forEach(o => {
+      const idx = ORDERS.findIndex(or => or.po === o.po);
+      if (idx >= 0) {
+        ORDERS[idx].status = "Staging";
+        ORDERS[idx].loadId = loadId;
+      }
+    });
+    localStorage.setItem("ncdc-orders", JSON.stringify(ORDERS));
+    renderOrders();
+    renderTruckloads();
+    renderDock();
   });
 }
 
-window.markArrival = function(loadId) {
-  // store arrival on truckload
-  const tl = truckloads.find(t => t.loadId === loadId);
-  if (tl) {
-    tl.arrivedAt = new Date().toISOString();
+// ---------- DOCK ----------
+function renderDock() {
+  const dock = $("#dock-list");
+  const staging = ORDERS.filter(o => o.status.toLowerCase() === "staging");
+  if (!staging.length) {
+    dock.textContent = "No orders being staged.";
+    return;
   }
-  renderTodayTab();
-};
-window.markDeparture = function(loadId) {
-  const tlIndex = truckloads.findIndex(t => t.loadId === loadId);
-  if (tlIndex !== -1) {
-    const tl = truckloads[tlIndex];
-    tl.departedAt = new Date().toISOString();
-    // move to history
-    departedLoads.push(tl);
-    truckloads.splice(tlIndex, 1);
-    renderTruckloadsTab();
-    renderHistoryTab();
-    renderDockTab();
-    renderTodayTab();
+  dock.innerHTML = "";
+  staging.forEach(o => {
+    const div = document.createElement("div");
+    div.className = "dock-item";
+    div.innerHTML = `
+      <strong>${o.loadId || o.po}</strong> – ${o.custname || o.customer} – ${o.ttlqty} units
+    `;
+    dock.appendChild(div);
+  });
+
+  // summary
+  $("#dock-summary").innerHTML = `
+    <span class="chip">Available to stage: ${staging.length}</span>
+  `;
+}
+
+// ---------- TRUCKLOADS ----------
+function renderTruckloads() {
+  const box = $("#truckloads-list");
+  if (!TRUCKLOADS.length) {
+    box.textContent = "No truckloads yet.";
+    return;
   }
-};
-
-// =============== TODAY TAB RENDER ===============
-function renderTodayTab() {
-  const tbody = document.getElementById("todayTbody");
-  const summaryRow = document.getElementById("todaySummaryRow");
-  if (!tbody || !summaryRow) return;
-  tbody.innerHTML = "";
-  summaryRow.innerHTML = "";
-
-  const todayStr = new Date().toISOString().slice(0,10);
-  const todays = truckloads.filter(t => t.pickupDate === todayStr);
-
-  const totalTrucks = todays.length;
-  const atDoor = todays.filter(t => t.arrivedAt && !t.departedAt).length;
-  const departed = todays.filter(t => t.departedAt).length;
-  const remaining = totalTrucks - departed;
-  const totalCartons = todays.reduce((s, t) => s + (t.totalQty || 0), 0);
-  const totalAmt = todays.reduce((s, t) => s + (t.totalAmt || 0), 0);
-
-  summaryRow.innerHTML = `
-    <div class="summary-pill">Today trucks: ${totalTrucks}</div>
-    <div class="summary-pill">At door: ${atDoor}</div>
-    <div class="summary-pill">Departed: ${departed}</div>
-    <div class="summary-pill">Remaining: ${remaining}</div>
-    <div class="summary-pill">Cartons: ${totalCartons}</div>
-    <div class="summary-pill">TTL $: ${totalAmt}</div>
-  `;
-
-  todays.forEach(t => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${t.loadId}</td>
-      <td></td>
-      <td></td>
-      <td>${t.pickupWindow}</td>
-      <td>${t.shipper}</td>
-      <td>${t.totalQty}</td>
-      <td><!-- pallets --></td>
-      <td><!-- staged --> </td>
-      <td>${t.comments || ""}</td>
-      <td>${t.arrivedAt ? new Date(t.arrivedAt).toLocaleTimeString() : '<button class="btn-secondary small" onclick="markArrival(\''+t.loadId+'\')">Arrive</button>'}</td>
-      <td>${t.departedAt ? new Date(t.departedAt).toLocaleTimeString() : '<button class="btn-secondary small" onclick="markDeparture(\''+t.loadId+'\')">Depart</button>'}</td>
+  box.innerHTML = "";
+  TRUCKLOADS.forEach(tl => {
+    const div = document.createElement("div");
+    div.className = "card";
+    div.innerHTML = `
+      <strong>${tl.id}</strong> – ${tl.shipper} – ${tl.date} – Orders: ${tl.orders.length}
+      <div class="muted tiny">Qty: ${tl.ttlQty} • Amount: ${tl.ttlAmt}</div>
     `;
-    tbody.appendChild(tr);
+    box.appendChild(div);
   });
 }
 
-// =============== TRUCKLOADS TAB RENDER ===============
-function renderTruckloadsTab() {
-  const tbody = document.getElementById("truckloadsTbody");
-  const summary = document.getElementById("truckloadsSummaryRow");
-  if (!tbody || !summary) return;
-  tbody.innerHTML = "";
-  summary.innerHTML = "";
-
-  const total = truckloads.length;
-  const today = new Date().toISOString().slice(0,10);
-  const todayCount = truckloads.filter(t => t.pickupDate === today).length;
-  const weekCount = truckloads.length; // simple for now
-  summary.innerHTML = `
-    <div class="summary-pill">Total trucks: ${total}</div>
-    <div class="summary-pill">Today: ${todayCount}</div>
-    <div class="summary-pill">This week: ${weekCount}</div>
-  `;
-  truckloads.forEach(t => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${t.loadId}</td>
-      <td>${t.pickupDate}</td>
-      <td>${t.pickupWindow}</td>
-      <td>${t.shipper}</td>
-      <td>${t.orders.length}</td>
-      <td>${t.totalQty}</td>
-      <td>${t.totalAmt}</td>
-      <td>${t.status}</td>
-    `;
-    tbody.appendChild(tr);
-  });
+// ---------- METRICS ----------
+function seedMetricsFromOrders() {
+  // basic seeding, in real we would compute durations
+  METRICS = ORDERS.map(o => ({
+    date: o.startDate || new Date().toISOString().slice(0,10),
+    customer: o.custname || o.customer,
+    pallets: Math.ceil((o.ttlqty || 0) / 50),
+    worker: "Unassigned",
+  }));
+  localStorage.setItem("ncdc-metrics", JSON.stringify(METRICS));
+  drawMetricsChart("month");
 }
 
-// =============== METRICS RENDER ===============
-function renderMetricsTab() {
-  const sr = document.getElementById("metricsSummaryRow");
-  if (!sr) return;
-  const trucks = truckloads.length;
-  const orders = ordersData.length;
-  sr.innerHTML = `
-    <div class="summary-pill">Active trucks: ${trucks}</div>
-    <div class="summary-pill">Orders loaded: ${orders}</div>
-  `;
-
-  drawSimpleChart("chartDailyOrders", [5,8,6,9,4,3,7], "Daily Orders");
-  drawSimpleChart("chartDockPerformance", [80,76,90,88,85,70,95], "Dock Performance");
-}
-
-function drawSimpleChart(canvasId, data, label) {
-  const canvas = document.getElementById(canvasId);
+function drawMetricsChart(range) {
+  const canvas = $("#metrics-chart");
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
-  // very simple bar chart
   ctx.clearRect(0,0,canvas.width,canvas.height);
-  const w = canvas.width = 260;
-  const h = canvas.height = 120;
-  const max = Math.max(...data, 1);
-  const barW = w / data.length - 10;
-  data.forEach((val, idx) => {
-    const barH = (val / max) * (h - 20);
-    ctx.fillStyle = "#2563eb";
-    ctx.fillRect(10 + idx*(barW+10), h - barH - 10, barW, barH);
-  });
-  ctx.fillStyle = "#6b7280";
-  ctx.font = "10px sans-serif";
-  ctx.fillText(label, 10, 10);
-}
 
-// =============== EXPORT METRICS ===============
-function exportMetricsCsv() {
-  // build CSV text from current truckloads + counts
-  let csv = "Section,Metric,Value\n";
-  csv += "Summary,Active trucks," + truckloads.length + "\n";
-  csv += "Summary,Orders loaded," + ordersData.length + "\n";
-  csv += "\nTruckloads Detail\n";
-  csv += "Load ID,Pickup Date,Pickup Window,Carrier,Orders,TTL QTY,TTL $\n";
-  truckloads.forEach(t => {
-    csv += `${t.loadId},${t.pickupDate},${t.pickupWindow},${t.shipper},${t.orders.length},${t.totalQty},${t.totalAmt}\n`;
-  });
-
-  const blob = new Blob([csv], {type: "text/csv"});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "ncdc-metrics.csv";
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-// =============== HISTORY RENDER ===============
-function renderHistoryTab() {
-  const tbody = document.getElementById("historyTbody");
-  if (!tbody) return;
-  tbody.innerHTML = "";
-  departedLoads.forEach(dl => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${dl.loadId}</td>
-      <td>${dl.pickupDate}</td>
-      <td>${dl.shipper}</td>
-      <td>${dl.totalQty}</td>
-      <td>${dl.totalAmt}</td>
-      <td><button class="btn-secondary small" onclick="alert('POs: ${dl.orders.join(", ")}')">View</button></td>
-    `;
-    tbody.appendChild(tr);
-  });
-}
-
-// =============== TEAM RENDER ===============
-function renderTeamTab() {
-  const tbody = document.getElementById("teamTbody");
-  if (!tbody) return;
-  tbody.innerHTML = "";
-  // simple placeholder
-  const team = [
-    { name: "Owner (You)", role: "owner", shift: "1st" },
-    { name: "Router A", role: "router", shift: "1st" },
-    { name: "Dock A", role: "dock", shift: "2nd" },
-  ];
-  team.forEach(m => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${m.name}</td>
-      <td>${m.role}</td>
-      <td>${m.shift}</td>
-      <td><button class="btn-secondary small">Edit</button></td>
-    `;
-    tbody.appendChild(tr);
-  });
-}
-
-// =============== SETTINGS: CAPACITIES ===============
-function buildSlotCapacityInputs() {
-  const wrap = document.getElementById("slotCapacityList");
-  if (!wrap) return;
-  if (Object.keys(slotCapacities).length === 0) {
-    PICKUP_WINDOWS.forEach(w => {
-      slotCapacities[w] = { LTL: 4, "Truck Load": 4, "Floor Load": 4 };
-    });
+  // simple bar rendering
+  const labels = ["Wk1","Wk2","Wk3","Wk4"];
+  if (range === "month") {
+    // 4 bars
+  } else if (range === "week") {
+    labels.splice(0, labels.length, "Mon","Tue","Wed","Thu","Fri","Sat","Sun");
+  } else {
+    labels.splice(0, labels.length, "Today");
   }
-  wrap.innerHTML = "";
-  Object.entries(slotCapacities).forEach(([win, caps]) => {
-    const div = document.createElement("div");
-    div.style.marginBottom = "0.4rem";
-    div.innerHTML = `
-      <strong>${win}</strong><br/>
-      LTL <input data-win="${win}" data-type="LTL" value="${caps.LTL}" style="width:3rem" />
-      TL <input data-win="${win}" data-type="Truck Load" value="${caps["Truck Load"]}" style="width:3rem" />
-      Floor <input data-win="${win}" data-type="Floor Load" value="${caps["Floor Load"]}" style="width:3rem" />
-    `;
-    wrap.appendChild(div);
-  });
-  wrap.querySelectorAll("input").forEach(inp => {
-    inp.addEventListener("change", () => {
-      const win = inp.getAttribute("data-win");
-      const type = inp.getAttribute("data-type");
-      slotCapacities[win][type] = Number(inp.value) || 0;
-    });
+
+  const barW = 40;
+  const gap = 20;
+  const baseY = 130;
+  labels.forEach((l,idx) => {
+    const h = 20 + (idx * 10);
+    ctx.fillStyle = "#2b6cb0";
+    ctx.fillRect(20 + idx*(barW+gap), baseY - h, barW, h);
+    ctx.fillStyle = "#4a5568";
+    ctx.fillText(l, 25 + idx*(barW+gap), baseY + 12);
   });
 }
 
-// =============== THEME & PREFS ===============
-function applyTheme(dark) {
-  const html = document.documentElement;
-  html.setAttribute("data-theme", dark ? "dark" : "light");
+// ---------- EXPORT ----------
+function initExport() {
+  $("#export-metrics").addEventListener("click", () => {
+    // one CSV, multiple sections
+    let csv = "NCDC Metrics Export\n";
+    csv += "Section,Value\n";
+    csv += "Total Orders," + ORDERS.length + "\n";
+    csv += "\n--Monthly--\n";
+    csv += "Date,Customer,Pallets\n";
+    METRICS.forEach(m => {
+      csv += `${m.date},${m.customer},${m.pallets}\n`;
+    });
+
+    const blob = new Blob([csv], {type: "text/csv"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "ncdc-metrics.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  });
 }
-function savePrefs() {
-  localStorage.setItem("ncdc_prefs", JSON.stringify({
-    language: languagePref,
-    darkMode: darkModePref
-  }));
+
+// ---------- INIT ----------
+function renderAll() {
+  renderOrders();
+  renderDock();
+  renderTruckloads();
+  drawMetricsChart("month"); // your requested default
 }
-function updateTopbarPrefs() {
-  const t = document.getElementById("themeIndicator");
-  const l = document.getElementById("langIndicator");
-  if (t) t.textContent = darkModePref ? "Dark" : "Light";
-  if (l) l.textContent = languagePref === "en" ? "EN" : "ES-LA";
-}
+
+document.addEventListener("DOMContentLoaded", () => {
+  initLogin();
+  initTabs();
+  initSettings();
+  initCSVUpload();
+  initFilters();
+  initBuildTruckload();
+  initExport();
+});
