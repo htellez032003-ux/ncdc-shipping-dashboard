@@ -1,666 +1,597 @@
-// ===== BASIC APP STATE =====
-const APP = {
-  currentUser: null,
-  users: [
-    { email: "htellez032003@gmail.com", password: "Ltapparel040523", name: "Owner", role: "owner" },
-    { email: "router@ncdc.com", password: "router", name: "Router", role: "router" },
-    { email: "dock@ncdc.com", password: "dock", name: "Dock", role: "dock" },
-  ],
-  orders: [],
-  truckloads: [],
-  history: [],
-  settings: {
-    theme: "light",
-    language: "en",
-    maxLoadsPerBlock: 4,
-  },
-  selectedPOs: [],
-};
+// script.js
 
-// ====== UTILITIES ======
-function $(sel) {
-  return document.querySelector(sel);
-}
-function $all(sel) {
-  return Array.from(document.querySelectorAll(sel));
-}
-function saveState() {
-  localStorage.setItem("ncdc-app", JSON.stringify({
-    orders: APP.orders,
-    truckloads: APP.truckloads,
-    history: APP.history,
-    settings: APP.settings,
-    users: APP.users,
-  }));
-}
-function loadState() {
-  const raw = localStorage.getItem("ncdc-app");
-  if (!raw) return;
-  try {
-    const data = JSON.parse(raw);
-    APP.orders = data.orders || [];
-    APP.truckloads = data.truckloads || [];
-    APP.history = data.history || [];
-    APP.settings = { ...APP.settings, ...(data.settings || {}) };
-    APP.users = data.users || APP.users;
-  } catch (e) {
-    console.warn("state load failed", e);
+// --- STATE ----------------------------------------------------
+let orders = [];           // all parsed orders from CSV
+let filteredOrders = [];   // after search/date filter
+let selectedPOs = new Set();
+let truckloads = [];       // created truckloads
+let historyLoads = [];     // departed
+let team = [
+  { name: "Router 1", role: "router", shift: "1st", active: true },
+  { name: "Dock Lead", role: "dock", shift: "1st", active: true }
+];
+
+// --- LOGIN ----------------------------------------------------
+const loginScreen = document.getElementById("login-screen");
+const appShell = document.getElementById("app-shell");
+const loginBtn = document.getElementById("login-btn");
+const loginError = document.getElementById("login-error");
+const loginEmail = document.getElementById("login-email");
+const loginPassword = document.getElementById("login-password");
+
+loginBtn.addEventListener("click", () => {
+  const ok =
+    loginEmail.value.trim() === "htellez032003@gmail.com" &&
+    loginPassword.value.trim() === "Ltapaprel040523";
+
+  if (ok) {
+    loginError.classList.add("hidden");
+    loginScreen.classList.add("hidden");
+    appShell.classList.remove("hidden");
+  } else {
+    loginError.classList.remove("hidden");
   }
+});
+
+document.getElementById("logout-btn").addEventListener("click", () => {
+  appShell.classList.add("hidden");
+  loginScreen.classList.remove("hidden");
+});
+
+// --- TABS -----------------------------------------------------
+const navLinks = document.querySelectorAll(".nav-link");
+const tabPanels = document.querySelectorAll(".tab-panel");
+
+navLinks.forEach(btn => {
+  btn.addEventListener("click", () => {
+    navLinks.forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    const tab = btn.dataset.tab;
+    tabPanels.forEach(p => {
+      if (p.id === "tab-" + tab) p.classList.remove("hidden");
+      else p.classList.add("hidden");
+    });
+  });
+});
+
+// --- CSV UPLOAD -----------------------------------------------
+const csvInput = document.getElementById("orders-csv");
+csvInput.addEventListener("change", handleCSVUpload);
+
+function handleCSVUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = evt => {
+    const text = evt.target.result;
+    parseCSV(text);
+    document.getElementById("csv-updated").textContent =
+      "CSV updated: " + new Date().toLocaleString();
+  };
+  reader.readAsText(file);
 }
 
-// ===== CSV PARSER (simple) =====
+// parse CSV into array of objects
 function parseCSV(text) {
-  const lines = text.replace(/\r/g, "").split("\n").filter(l => l.trim().length);
-  if (!lines.length) return { headers: [], rows: [] };
-  const headers = lines[0].split(",").map(h => h.trim());
-  const rows = lines.slice(1).map(line => {
-    const parts = line.split(",");
+  const lines = text.split(/\r?\n/).filter(l => l.trim() !== "");
+  const header = lines[0].split(",").map(h => h.trim());
+  orders = lines.slice(1).map(line => {
+    const cols = splitCSVLine(line);
     const obj = {};
-    headers.forEach((h, i) => {
-      obj[h] = (parts[i] || "").trim();
+    header.forEach((h, i) => {
+      obj[h] = cols[i] ? cols[i].trim() : "";
     });
     return obj;
   });
-  return { headers, rows };
+
+  // default: no filter
+  filteredOrders = orders.slice();
+  renderOrders();
 }
 
-// ===== ORDERS RENDER =====
-function renderOrdersTable() {
-  const headRow = $("#orders-head-row");
-  const tbody = $("#orders-tbody");
-  headRow.innerHTML = "";
-  tbody.innerHTML = "";
+// simple CSV splitter (no quotes nested for now)
+function splitCSVLine(line) {
+  // very basic – user said leave advanced for later
+  return line.split(",");
+}
 
-  if (!APP.orders.length) return;
+// --- RENDER ORDERS --------------------------------------------
+const ordersBody = document.getElementById("orders-body");
+const selectedCountEl = document.getElementById("selected-count");
 
-  // always show checkbox first
-  const headers = Object.keys(APP.orders[0]);
-  // ensure a few extra headers are present
-  const ensure = [
-    "Division","BOL#","Master BOL#","PO Num","Cust Name","Shipper","Author#","TTL QTY","TTL Amt",
-    "Total Weight","Total Cubic","Est. Cartons","Est. Pallet","Pick Proc Date","Start Date","Cancel Date","Route Date","Scheduled Date","Ready Date","Router","PT STATUS","Load ID"
-  ];
-  ensure.forEach(h => {
-    if (!headers.includes(h)) headers.push(h);
-  });
-
-  // header row
-  const th1 = document.createElement("th");
-  th1.innerHTML = `<input type="checkbox" id="orders-select-all">`;
-  headRow.appendChild(th1);
-
-  headers.forEach(h => {
-    const th = document.createElement("th");
-    th.textContent = h;
-    headRow.appendChild(th);
-  });
-
-  // rows
-  const filterText = ($("#filter-text")?.value || "").toLowerCase();
-  const dateCol = $("#date-column-select")?.value || "";
-  const df = $("#date-from")?.value;
-  const dt = $("#date-to")?.value;
-
-  APP.orders.forEach((row, idx) => {
-    // text filter
-    const str = Object.values(row).join(" ").toLowerCase();
-    if (filterText && !str.includes(filterText)) return;
-
-    // date filter
-    if (dateCol) {
-      const val = row[dateCol] || "";
-      if (df && val && val < df) return;
-      if (dt && val && val > dt) return;
-    }
-
+function renderOrders() {
+  ordersBody.innerHTML = "";
+  filteredOrders.forEach((ord, idx) => {
     const tr = document.createElement("tr");
-    const selected = APP.selectedPOs.includes(row["PO Num"]);
-    tr.innerHTML = `<td><input type="checkbox" class="order-select" data-index="${idx}" ${selected ? "checked" : ""}></td>` +
-      headers.map(h => {
-        let v = row[h] || "";
-        if (h === "Author#") {
-          // force text
-          v = String(v);
-        }
-        return `<td>${v}</td>`;
-      }).join("");
-    tbody.appendChild(tr);
+
+    // key columns (must match your new headers if present)
+    const division = ord["Division"] || "";
+    const bol = ord["BOL#"] || "";
+    const mbol = ord["Master BOL#"] || "";
+    const po = ord["PO Num"] || "";
+    const customer = ord["Customer"] || "";
+    const custName = ord["Cust Name"] || "";
+    const shipper = ord["Shipper"] || "";
+    const ttlQty = ord["TTL QTY"] || "";
+    const ttlAmt = ord["TTL Amt"] || "";
+    const totalWeight = ord["Total Weight"] || "";
+    const totalCubic = ord["Total Cubic"] || "";
+    const estCartons = ord["Est. Cartons"] || "";
+    const estPallet = ord["Est. Pallet"] || "";
+    const pickProc = ord["Pick Proc Date"] || "";
+    const startDate = ord["Start Date"] || "";
+    const cancelDate = ord["Cancel Date"] || "";
+    const router = ord["Router"] || "";
+    const routeDate = ord["Route Date"] || "";
+    const schedDate = ord["Scheduled Date"] || "";
+    const readyDate = ord["Ready Date"] || "";
+    const author = ord["Author#"] || "";
+    const ptStatus = ord["PT STATUS"] || "";
+
+    const isSelected = selectedPOs.has(po);
+
+    tr.innerHTML = `
+      <td><input type="checkbox" class="po-check" data-po="${po}" ${isSelected ? "checked" : ""}></td>
+      <td>${division}</td>
+      <td>${bol}</td>
+      <td>${mbol}</td>
+      <td>${po}</td>
+      <td>${customer}</td>
+      <td>${custName}</td>
+      <td>${shipper}</td>
+      <td>${ttlQty}</td>
+      <td>${ttlAmt}</td>
+      <td>${totalWeight}</td>
+      <td>${totalCubic}</td>
+      <td>${estCartons}</td>
+      <td>${estPallet}</td>
+      <td>${pickProc}</td>
+      <td>${startDate}</td>
+      <td>${cancelDate}</td>
+      <td>${router}</td>
+      <td>${routeDate}</td>
+      <td>${schedDate}</td>
+      <td>${readyDate}</td>
+      <td>${author}</td>
+      <td>${ptStatus}</td>
+      <td>${""}</td>
+    `;
+    ordersBody.appendChild(tr);
   });
 
-  updateSelectedCount();
-
-  // select all handler
-  const master = $("#orders-select-all");
-  if (master) {
-    master.addEventListener("change", e => {
-      const checks = $all(".order-select");
-      checks.forEach(ch => {
-        ch.checked = e.target.checked;
-        const idx = Number(ch.dataset.index);
-        const po = APP.orders[idx]["PO Num"];
-        if (e.target.checked) {
-          if (!APP.selectedPOs.includes(po)) APP.selectedPOs.push(po);
-        } else {
-          APP.selectedPOs = [];
-        }
-      });
-      updateSelectedCount();
-    });
-  }
-
-  // individual selects
-  $all(".order-select").forEach(ch => {
-    ch.addEventListener("change", e => {
-      const idx = Number(e.target.dataset.index);
-      const po = APP.orders[idx]["PO Num"];
-      if (e.target.checked) {
-        if (!APP.selectedPOs.includes(po)) APP.selectedPOs.push(po);
-      } else {
-        APP.selectedPOs = APP.selectedPOs.filter(p => p !== po);
-      }
-      updateSelectedCount();
+  // attach checkbox handlers
+  document.querySelectorAll(".po-check").forEach(chk => {
+    chk.addEventListener("change", e => {
+      const po = e.target.dataset.po;
+      if (e.target.checked) selectedPOs.add(po);
+      else selectedPOs.delete(po);
+      selectedCountEl.textContent = selectedPOs.size;
     });
   });
+
+  // update selected count
+  selectedCountEl.textContent = selectedPOs.size;
 }
 
-function updateSelectedCount() {
-  const el = $("#selected-count");
-  if (el) el.textContent = `Selected POs: ${APP.selectedPOs.length}`;
-}
+// select-all should only select visible rows
+document.getElementById("select-all-orders").addEventListener("change", e => {
+  const checked = e.target.checked;
+  document.querySelectorAll("#orders-body .po-check").forEach(chk => {
+    chk.checked = checked;
+    const po = chk.dataset.po;
+    if (checked) selectedPOs.add(po);
+    else selectedPOs.delete(po);
+  });
+  selectedCountEl.textContent = selectedPOs.size;
+});
 
-// ===== CALENDAR =====
+// --- SEARCH / FILTERS -----------------------------------------
+document.getElementById("orders-search").addEventListener("input", e => {
+  const q = e.target.value.toLowerCase();
+  filteredOrders = orders.filter(o => {
+    return (
+      (o["PO Num"] || "").toLowerCase().includes(q) ||
+      (o["Customer"] || "").toLowerCase().includes(q) ||
+      (o["Cust Name"] || "").toLowerCase().includes(q) ||
+      (o["Shipper"] || "").toLowerCase().includes(q) ||
+      (o["BOL#"] || "").toLowerCase().includes(q)
+    );
+  });
+  renderOrders();
+});
+
+document.getElementById("apply-date-filter").addEventListener("click", () => {
+  const col = document.getElementById("date-column-select").value;
+  const from = document.getElementById("date-from").value;
+  const to = document.getElementById("date-to").value;
+  filteredOrders = orders.filter(o => {
+    const val = (o[col] || "").split(" ")[0]; // in case time added later
+    if (!val) return false;
+    if (from && val < from) return false;
+    if (to && val > to) return false;
+    return true;
+  });
+  renderOrders();
+});
+
+document.getElementById("clear-filters").addEventListener("click", () => {
+  filteredOrders = orders.slice();
+  document.getElementById("orders-search").value = "";
+  document.getElementById("date-from").value = "";
+  document.getElementById("date-to").value = "";
+  renderOrders();
+});
+
+// --- CALENDAR (orders) ----------------------------------------
+const calendarEl = document.getElementById("orders-calendar");
+const calendarDetail = document.getElementById("calendar-detail");
+renderCalendar();
+
 function renderCalendar() {
-  const cal = $("#pickup-calendar");
-  if (!cal) return;
-  cal.innerHTML = "";
-
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = today.getMonth(); // 0-index
-  const first = new Date(year, month, 1);
-  const startDay = first.getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-
-  for (let i = 0; i < startDay; i++) {
-    const div = document.createElement("div");
-    cal.appendChild(div);
-  }
-
-  for (let d = 1; d <= daysInMonth; d++) {
-    const div = document.createElement("div");
-    div.className = "calendar-day";
-    div.textContent = d;
-    div.addEventListener("click", () => showCalendarDay(year, month, d));
-    cal.appendChild(div);
+  calendarEl.innerHTML = "";
+  // just render 30 days
+  for (let d = 1; d <= 30; d++) {
+    const btn = document.createElement("button");
+    btn.textContent = d;
+    btn.addEventListener("click", () => {
+      calendarDetail.textContent = "Availability for day " + d + " – will show LTL / TL / Floorload slots.";
+    });
+    calendarEl.appendChild(btn);
   }
 }
 
-function showCalendarDay(y, m, d) {
-  const title = $("#calendar-day-title");
-  const list = $("#calendar-day-list");
-  const mm = (m + 1).toString().padStart(2, "0");
-  const dd = d.toString().padStart(2, "0");
-  const iso = `${y}-${mm}-${dd}`;
-  title.textContent = `Pickups for ${iso}`;
-  list.innerHTML = "";
+// --- CREATE TRUCKLOAD MODAL -----------------------------------
+const createTLBtn = document.getElementById("create-truckload-btn");
+const modalOverlay = document.getElementById("modal-overlay");
+const modalSelectedPOs = document.getElementById("modal-selected-pos");
+const tlSave = document.getElementById("tl-save");
+const tlCancel = document.getElementById("tl-cancel");
 
-  // show truckloads with that pickup date
-  const loads = APP.truckloads.filter(tl => (tl.pickupDate || "") === iso);
-  if (!loads.length) {
-    const li = document.createElement("li");
-    li.textContent = "No truckloads scheduled.";
-    list.appendChild(li);
+createTLBtn.addEventListener("click", () => {
+  if (selectedPOs.size === 0) {
+    alert("Select at least one PO line first.");
     return;
   }
+  modalSelectedPOs.textContent = "POs: " + Array.from(selectedPOs).join(", ");
+  modalOverlay.classList.remove("hidden");
+});
 
-  loads.forEach(ld => {
-    const li = document.createElement("li");
-    li.textContent = `${ld.loadId} – ${ld.carrier || "Carrier"} – ${ld.loadType || ""}`;
-    list.appendChild(li);
-  });
-}
+tlCancel.addEventListener("click", () => {
+  modalOverlay.classList.add("hidden");
+});
 
-// ===== DOCK RENDER =====
+tlSave.addEventListener("click", () => {
+  const loadId = document.getElementById("tl-load-id").value.trim() || "LOAD-" + (truckloads.length + 1);
+  const loadType = document.getElementById("tl-load-type").value;
+  const pickupDate = document.getElementById("tl-pickup-date").value;
+  const carrier = document.getElementById("tl-carrier").value;
+  const customer = document.getElementById("tl-customer").value;
+  const bol = document.getElementById("tl-bol").value;
+  const cartons = Number(document.getElementById("tl-cartons").value) || 0;
+  const pallets = Number(document.getElementById("tl-pallets").value) || 0;
+
+  const tl = {
+    loadId,
+    loadType,
+    pickupDate,
+    carrier,
+    customer,
+    bol,
+    cartons,
+    pallets,
+    status: "Unstaged",
+    stagedLocation: "",
+    assignedTo: "",
+    departed: false
+  };
+
+  truckloads.push(tl);
+
+  // also push to history later when departed
+  renderTruckloads();
+  renderDock();
+  renderTodays();
+  renderTodaysFull();
+  modalOverlay.classList.add("hidden");
+  // clear selection?
+  // selectedPOs.clear();
+  selectedCountEl.textContent = selectedPOs.size;
+});
+
+// --- RENDER DOCK ----------------------------------------------
 function renderDock() {
-  const tbody = $("#dock-tbody");
-  if (!tbody) return;
-  tbody.innerHTML = "";
-  APP.truckloads.forEach(tl => {
+  const dockBody = document.getElementById("dock-body");
+  const dockPreviewBody = document.getElementById("dock-preview-body");
+  dockBody.innerHTML = "";
+  dockPreviewBody.innerHTML = "";
+
+  truckloads.forEach(tl => {
     const tr = document.createElement("tr");
-    tr.dataset.id = tl.loadId;
     tr.innerHTML = `
-      <td>${tl.loadId || ""}</td>
+      <td>${tl.loadId}</td>
       <td>${tl.customer || ""}</td>
       <td>${tl.carrier || ""}</td>
-      <td>${tl.loadType || ""}</td>
+      <td>${tl.loadType}</td>
       <td>${tl.pickupDate || ""}</td>
-      <td>${tl.totalCartons || ""}</td>
-      <td>${tl.routedPalletCount || ""}</td>
+      <td>${tl.cartons}</td>
+      <td>${tl.pallets}</td>
       <td>${tl.stagedLocation || ""}</td>
       <td>${tl.assignedTo || ""}</td>
-      <td>${tl.status || "Unassigned"}</td>
+      <td>${tl.status}</td>
       <td>
-        <button class="btn small assign-btn">Assign</button>
-        <button class="btn small secondary staged-btn">Fully staged</button>
+        <button class="btn tiny" data-assign="${tl.loadId}">Assign</button>
+        <button class="btn tiny secondary" data-stage="${tl.loadId}">Fully Staged</button>
       </td>
     `;
-    tbody.appendChild(tr);
-  });
+    dockBody.appendChild(tr);
 
-  $all("#dock-tbody .assign-btn").forEach(btn => {
-    btn.addEventListener("click", e => {
-      const tr = e.target.closest("tr");
-      const id = tr.dataset.id;
-      const name = prompt("Assign to (dock associate):");
-      if (!name) return;
-      const tl = APP.truckloads.find(t => t.loadId === id);
-      if (tl) {
-        tl.assignedTo = name;
-        tl.status = "Being staged";
-      }
-      saveState();
-      renderDock();
-      renderToday();
-    });
-  });
-
-  $all("#dock-tbody .staged-btn").forEach(btn => {
-    btn.addEventListener("click", e => {
-      const tr = e.target.closest("tr");
-      const id = tr.dataset.id;
-      const tl = APP.truckloads.find(t => t.loadId === id);
-      if (tl) {
-        tl.status = "Fully staged";
-      }
-      saveState();
-      renderDock();
-      renderMetrics();
-      renderToday();
-    });
-  });
-}
-
-// ===== TODAY RENDER =====
-function todayISO() {
-  const d = new Date();
-  const iso = d.toISOString().slice(0, 10);
-  return iso;
-}
-function renderToday() {
-  const tbody = $("#today-tbody");
-  if (!tbody) return;
-  tbody.innerHTML = "";
-  const today = todayISO();
-  let total = 0, atDoor = 0, departed = 0, cartons = 0;
-
-  const todayLoads = APP.truckloads.filter(t => t.pickupDate === today);
-  // sort by carrier
-  todayLoads.sort((a, b) => (a.carrier || "").localeCompare(b.carrier || ""));
-  todayLoads.forEach(tl => {
-    total++;
-    cartons += Number(tl.totalCartons || 0);
-    const tr = document.createElement("tr");
-    tr.dataset.id = tl.loadId;
-    let status = tl.todayStatus || "Scheduled";
-    if (status === "At door") atDoor++;
-    if (status === "Departed") departed++;
-
-    tr.className = status === "At door" ? "row-arrived" : status === "Departed" ? "row-departed" : "";
-
-    tr.innerHTML = `
+    const tr2 = document.createElement("tr");
+    tr2.innerHTML = `
       <td>${tl.loadId}</td>
       <td>${tl.customer || ""}</td>
       <td>${tl.carrier || ""}</td>
-      <td>${tl.loadType || ""}</td>
-      <td>${tl.pickupWindow || ""}</td>
-      <td>${tl.totalCartons || ""}</td>
-      <td>${status}</td>
-      <td><button class="btn small arrive-btn">Arrived</button></td>
-      <td><button class="btn small secondary depart-btn">Departed</button></td>
-    `;
-    tbody.appendChild(tr);
-  });
-
-  $("#today-total-trucks").textContent = total;
-  $("#today-at-door").textContent = atDoor;
-  $("#today-departed").textContent = departed;
-  $("#today-cartons").textContent = cartons;
-
-  $all(".arrive-btn").forEach(btn => {
-    btn.addEventListener("click", e => {
-      const tr = e.target.closest("tr");
-      const id = tr.dataset.id;
-      const tl = APP.truckloads.find(t => t.loadId === id);
-      if (tl) {
-        tl.todayStatus = "At door";
-      }
-      saveState();
-      renderToday();
-    });
-  });
-
-  $all(".depart-btn").forEach(btn => {
-    btn.addEventListener("click", e => {
-      const tr = e.target.closest("tr");
-      const id = tr.dataset.id;
-      const tl = APP.truckloads.find(t => t.loadId === id);
-      if (tl) {
-        tl.todayStatus = "Departed";
-        // move to history
-        APP.history.push({ ...tl, status: "Departed" });
-      }
-      saveState();
-      renderToday();
-      renderHistory();
-    });
-  });
-}
-
-// ===== TRUCKLOADS / HISTORY RENDER =====
-function renderTruckloads() {
-  const tbody = $("#truckloads-tbody");
-  if (!tbody) return;
-  tbody.innerHTML = "";
-  const term = ($("#truckloads-search")?.value || "").toLowerCase();
-  APP.truckloads.forEach(tl => {
-    const joined = Object.values(tl).join(" ").toLowerCase();
-    if (term && !joined.includes(term)) return;
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${tl.loadId}</td>
-      <td>${tl.customer || ""}</td>
-      <td>${tl.carrier || ""}</td>
+      <td>${tl.loadType}</td>
       <td>${tl.pickupDate || ""}</td>
-      <td>${tl.loadType || ""}</td>
-      <td>${tl.totalCartons || ""}</td>
-      <td>${tl.totalWeight || ""}</td>
-      <td>${tl.totalCubic || ""}</td>
-      <td>${tl.routedPalletCount || ""}</td>
+      <td>${tl.cartons}</td>
+      <td>${tl.pallets}</td>
       <td>${tl.stagedLocation || ""}</td>
+      <td>${tl.assignedTo || ""}</td>
+      <td>${tl.status}</td>
     `;
-    tbody.appendChild(tr);
+    dockPreviewBody.appendChild(tr2);
+  });
+
+  // attach actions
+  document.querySelectorAll("[data-assign]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.assign;
+      const name = prompt("Assign to who?");
+      const found = truckloads.find(t => t.loadId === id);
+      if (found) {
+        found.assignedTo = name || "";
+        found.status = "Being staged";
+        renderDock();
+        renderTodays();
+        renderTodaysFull();
+      }
+    });
+  });
+  document.querySelectorAll("[data-stage]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.stage;
+      const found = truckloads.find(t => t.loadId === id);
+      if (found) {
+        found.status = "Fully staged";
+        renderDock();
+        renderTodays();
+        renderTodaysFull();
+      }
+    });
   });
 }
 
+// --- RENDER TODAY'S PICKUPS (preview + full) ------------------
+function renderTodays() {
+  const todayBody = document.getElementById("today-body");
+  todayBody.innerHTML = "";
+
+  let totalTrucks = 0;
+  let atDoor = 0;
+  let departed = 0;
+  let totalCartons = 0;
+  let totalDollars = 0;
+
+  truckloads.forEach(tl => {
+    totalTrucks++;
+    totalCartons += tl.cartons;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${tl.loadId}</td>
+      <td>${tl.customer || ""}</td>
+      <td>${tl.carrier || ""}</td>
+      <td>${tl.loadType}</td>
+      <td>${tl.pickupDate || ""}</td>
+      <td>${tl.cartons}</td>
+      <td>${tl.status}</td>
+      <td><button class="btn tiny" data-arrived="${tl.loadId}">Arrived</button></td>
+      <td><button class="btn tiny secondary" data-departed="${tl.loadId}">Departed</button></td>
+    `;
+    todayBody.appendChild(tr);
+  });
+
+  document.getElementById("tp-total-trucks").textContent = totalTrucks;
+  document.getElementById("tp-at-door").textContent = atDoor;
+  document.getElementById("tp-departed").textContent = departed;
+  document.getElementById("tp-cartons").textContent = totalCartons;
+  document.getElementById("tp-dollars").textContent = "$" + totalDollars;
+
+  attachArrivedDeparted();
+}
+
+function renderTodaysFull() {
+  const body = document.getElementById("today-full-body");
+  if (!body) return;
+  body.innerHTML = "";
+
+  truckloads.forEach(tl => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${tl.loadId}</td>
+      <td>${tl.customer || ""}</td>
+      <td>${tl.carrier || ""}</td>
+      <td>${tl.loadType}</td>
+      <td>${tl.pickupDate || ""}</td>
+      <td>${tl.cartons}</td>
+      <td>${tl.status}</td>
+      <td><button class="btn tiny" data-arrived="${tl.loadId}">Arrived</button></td>
+      <td><button class="btn tiny secondary" data-departed="${tl.loadId}">Departed</button></td>
+    `;
+    body.appendChild(tr);
+  });
+
+  attachArrivedDeparted();
+}
+
+function attachArrivedDeparted() {
+  document.querySelectorAll("[data-arrived]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.arrived;
+      const tl = truckloads.find(t => t.loadId === id);
+      if (tl) {
+        tl.status = "At door";
+        renderTodays();
+        renderTodaysFull();
+      }
+    });
+  });
+  document.querySelectorAll("[data-departed]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.departed;
+      const tl = truckloads.find(t => t.loadId === id);
+      if (tl) {
+        tl.status = "Departed";
+        tl.departed = true;
+        historyLoads.push({
+          loadId: tl.loadId,
+          customer: tl.customer,
+          carrier: tl.carrier,
+          pickupDate: tl.pickupDate,
+          bol: tl.bol,
+          status: "Departed"
+        });
+        renderTodays();
+        renderTodaysFull();
+        renderHistory();
+      }
+    });
+  });
+}
+
+// --- RENDER TRUCKLOADS ----------------------------------------
+function renderTruckloads() {
+  const body = document.getElementById("truckloads-body");
+  const bodyFull = document.getElementById("truckloads-full-body");
+  if (body) body.innerHTML = "";
+  if (bodyFull) bodyFull.innerHTML = "";
+
+  truckloads.forEach(tl => {
+    if (body) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${tl.loadId}</td>
+        <td>${tl.customer || ""}</td>
+        <td>${tl.carrier || ""}</td>
+        <td>${tl.loadType}</td>
+        <td>${tl.pickupDate || ""}</td>
+        <td>${tl.cartons}</td>
+        <td>${tl.status}</td>
+      `;
+      body.appendChild(tr);
+    }
+
+    if (bodyFull) {
+      const tr2 = document.createElement("tr");
+      tr2.innerHTML = `
+        <td>${tl.loadId}</td>
+        <td>${tl.customer || ""}</td>
+        <td>${tl.carrier || ""}</td>
+        <td>${tl.loadType}</td>
+        <td>${tl.pickupDate || ""}</td>
+        <td>${""}</td>
+        <td>${""}</td>
+        <td>${tl.cartons}</td>
+        <td>${tl.pallets}</td>
+        <td>${tl.stagedLocation || ""}</td>
+        <td>${tl.status}</td>
+      `;
+      bodyFull.appendChild(tr2);
+    }
+  });
+}
+
+// --- HISTORY --------------------------------------------------
 function renderHistory() {
-  const tbody = $("#history-tbody");
-  if (!tbody) return;
-  tbody.innerHTML = "";
-  const term = ($("#history-search")?.value || "").toLowerCase();
-  APP.history.forEach(h => {
-    const joined = Object.values(h).join(" ").toLowerCase();
-    if (term && !joined.includes(term)) return;
+  const body = document.getElementById("history-body");
+  if (!body) return;
+  body.innerHTML = "";
+  historyLoads.forEach(h => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${h.loadId}</td>
       <td>${h.customer || ""}</td>
       <td>${h.carrier || ""}</td>
       <td>${h.pickupDate || ""}</td>
-      <td>${h.status || ""}</td>
+      <td>${h.bol || ""}</td>
+      <td>${h.status}</td>
     `;
-    tbody.appendChild(tr);
+    body.appendChild(tr);
   });
 }
 
-// ===== METRICS =====
-function renderMetrics() {
-  const monthLoads = APP.truckloads.length;
-  const cartons = APP.truckloads.reduce((sum, tl) => sum + Number(tl.totalCartons || 0), 0);
-  const staged = APP.truckloads.filter(tl => tl.status === "Fully staged").length;
-  $("#m-total-loads").textContent = monthLoads;
-  $("#m-total-cartons").textContent = cartons;
-  $("#m-fully-staged").textContent = staged;
-  const eff = monthLoads ? Math.round((staged / monthLoads) * 100) : 0;
-  $("#m-dock-eff").textContent = eff + "%";
-
-  const chart = $("#metrics-chart");
-  chart.innerHTML = "";
-  // simple bar view
-  const bars = [
-    { label: "Loads", value: monthLoads },
-    { label: "Staged", value: staged },
-    { label: "Cartons", value: cartons }
-  ];
-  const max = Math.max(1, ...bars.map(b => b.value));
-  bars.forEach(b => {
-    const row = document.createElement("div");
-    row.style.display = "flex";
-    row.style.alignItems = "center";
-    row.style.gap = "6px";
-    const label = document.createElement("div");
-    label.style.width = "70px";
-    label.textContent = b.label;
-    const bar = document.createElement("div");
-    bar.style.height = "10px";
-    bar.style.background = "rgba(43,108,232,.2)";
-    bar.style.width = (b.value / max) * 180 + "px";
-    const val = document.createElement("div");
-    val.textContent = b.value;
-    row.append(label, bar, val);
-    chart.appendChild(row);
-  });
-}
-
-// ===== TEAM =====
+// --- TEAM -----------------------------------------------------
 function renderTeam() {
-  const list = $("#team-list");
-  if (!list) return;
-  list.innerHTML = "";
-  APP.users.forEach(u => {
-    const li = document.createElement("li");
-    li.textContent = `${u.name || u.email} – ${u.role}`;
-    list.appendChild(li);
+  const body = document.getElementById("team-body");
+  if (!body) return;
+  body.innerHTML = "";
+  team.forEach(t => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${t.name}</td>
+      <td>${t.role}</td>
+      <td>${t.shift}</td>
+      <td>${t.active ? "Yes" : "No"}</td>
+    `;
+    body.appendChild(tr);
   });
 }
 
-// ===== EXPORTS =====
+// --- METRICS EXPORT -------------------------------------------
+document.getElementById("metrics-export").addEventListener("click", () => {
+  const rows = [
+    ["Metric", "Value"],
+    ["Trucks Today", truckloads.length],
+    ["Departed", historyLoads.length]
+  ];
+  downloadCSV("metrics.csv", rows);
+});
+
+// truckloads export
+document.getElementById("export-csv").addEventListener("click", () => {
+  exportTruckloads("truckloads-preview.csv");
+});
+document.getElementById("export-csv-full").addEventListener("click", () => {
+  exportTruckloads("truckloads.csv");
+});
+
+function exportTruckloads(filename) {
+  const rows = [
+    ["Load ID","Customer","Carrier","Load Type","Pick Up Date","Total Cartons","Status"]
+  ];
+  truckloads.forEach(tl => {
+    rows.push([
+      tl.loadId,
+      tl.customer || "",
+      tl.carrier || "",
+      tl.loadType,
+      tl.pickupDate || "",
+      tl.cartons,
+      tl.status
+    ]);
+  });
+  downloadCSV(filename, rows);
+}
+
 function downloadCSV(filename, rows) {
-  const csv = rows.map(r => r.join(",")).join("\n");
-  const blob = new Blob([csv], { type: "text/csv" });
+  const csvContent = rows.map(r => r.map(v => `"${v}"`).join(",")).join("\n");
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
-  document.body.appendChild(a);
   a.click();
-  document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
-// ===== INITIAL BINDINGS =====
-document.addEventListener("DOMContentLoaded", () => {
-  loadState();
-  const bodyId = document.body.id;
-
-  if (bodyId === "login-page") {
-    // login
-    const form = $("#login-form");
-    form.addEventListener("submit", e => {
-      e.preventDefault();
-      const em = $("#login-email").value.trim();
-      const pw = $("#login-password").value.trim();
-      const user = APP.users.find(u => u.email === em && u.password === pw);
-      if (!user) {
-        $("#login-error").classList.remove("hidden");
-        return;
-      }
-      localStorage.setItem("ncdc-current-user", JSON.stringify(user));
-      window.location.href = "./dashboard.html";
-    });
-    return;
-  }
-
-  if (bodyId === "dashboard-page") {
-    // restore current user
-    const cu = localStorage.getItem("ncdc-current-user");
-    if (cu) APP.currentUser = JSON.parse(cu);
-
-    // theme
-    if (APP.settings.theme === "dark") {
-      document.body.classList.add("dark");
-    }
-
-    // tab nav
-    $all("#nav-tabs .nav-link").forEach(btn => {
-      btn.addEventListener("click", () => {
-        const tab = btn.dataset.tab;
-        $all("#nav-tabs .nav-link").forEach(b => b.classList.remove("active"));
-        btn.classList.add("active");
-        $all(".tab-panel").forEach(p => p.classList.remove("active"));
-        $(`#tab-${tab}`).classList.add("active");
-      });
-    });
-
-    // logout
-    $("#logout-btn").addEventListener("click", () => {
-      localStorage.removeItem("ncdc-current-user");
-      window.location.href = "./index.html";
-    });
-
-    // csv upload
-    $("#orders-csv").addEventListener("change", e => {
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = evt => {
-        const { headers, rows } = parseCSV(evt.target.result);
-        // normalize to the new header list
-        APP.orders = rows;
-        $("#csv-updated").textContent = "CSV updated: " + new Date().toLocaleString();
-        saveState();
-        renderOrdersTable();
-      };
-      reader.readAsText(file);
-    });
-
-    // filters
-    $("#apply-filters").addEventListener("click", renderOrdersTable);
-    $("#clear-filters").addEventListener("click", () => {
-      $("#filter-text").value = "";
-      $("#date-from").value = "";
-      $("#date-to").value = "";
-      renderOrdersTable();
-    });
-
-    // open modal
-    $("#open-truck-modal").addEventListener("click", () => {
-      if (!APP.selectedPOs.length) {
-        alert("Select at least one PO to build a truckload.");
-        return;
-      }
-      $("#modal-overlay").classList.remove("hidden");
-    });
-    $("#modal-close").addEventListener("click", () => $("#modal-overlay").classList.add("hidden"));
-    $("#modal-cancel").addEventListener("click", () => $("#modal-overlay").classList.add("hidden"));
-
-    // save truckload
-    $("#modal-save").addEventListener("click", () => {
-      const tl = {
-        loadId: $("#ml-load-id").value.trim() || "TL-" + Date.now(),
-        loadType: $("#ml-load-type").value,
-        pickupDate: $("#ml-pickup-date").value,
-        pickupWindow: $("#ml-pickup-window").value,
-        carrier: $("#ml-carrier").value,
-        customer: $("#ml-customer").value,
-        bol: $("#ml-bol").value,
-        routedPalletCount: $("#ml-pallets").value,
-        totalCartons: $("#ml-cartons").value,
-        stagedLocation: "",
-        status: "Unassigned",
-        fromPOs: [...APP.selectedPOs],
-      };
-      APP.truckloads.push(tl);
-      // clear selections
-      APP.selectedPOs = [];
-      $("#modal-overlay").classList.add("hidden");
-      saveState();
-      renderOrdersTable();
-      renderTruckloads();
-      renderDock();
-      renderToday();
-      renderCalendar();
-    });
-
-    // truckload export
-    $("#truckloads-export").addEventListener("click", () => {
-      if (!APP.truckloads.length) {
-        alert("No truckloads to export.");
-        return;
-      }
-      const headers = ["Load ID","Customer","Carrier","Pick Up Date","Load Type","Total Cartons","Total Weight","Total Cubic","Pallets","Staged Location"];
-      const rows = [headers];
-      APP.truckloads.forEach(tl => {
-        rows.push([
-          tl.loadId || "",
-          tl.customer || "",
-          tl.carrier || "",
-          tl.pickupDate || "",
-          tl.loadType || "",
-          tl.totalCartons || "",
-          tl.totalWeight || "",
-          tl.totalCubic || "",
-          tl.routedPalletCount || "",
-          tl.stagedLocation || "",
-        ]);
-      });
-      downloadCSV("truckloads.csv", rows);
-    });
-
-    // metrics export
-    $("#metrics-export").addEventListener("click", () => {
-      const rows = [
-        ["Metric","Value"],
-        ["Total Loads (month)", APP.truckloads.length],
-        ["Total Cartons", APP.truckloads.reduce((s, t) => s + Number(t.totalCartons || 0), 0)],
-        ["Fully Staged", APP.truckloads.filter(t => t.status === "Fully staged").length]
-      ];
-      downloadCSV("metrics.csv", rows);
-    });
-
-    // search on truckloads
-    $("#truckloads-search").addEventListener("input", renderTruckloads);
-    $("#history-search").addEventListener("input", renderHistory);
-
-    // settings
-    $("#toggle-theme").addEventListener("click", () => {
-      document.body.classList.toggle("dark");
-      APP.settings.theme = document.body.classList.contains("dark") ? "dark" : "light";
-      saveState();
-    });
-    $("#lang-select").addEventListener("change", e => {
-      APP.settings.language = e.target.value;
-      saveState();
-    });
-    $("#max-loads").addEventListener("change", e => {
-      APP.settings.maxLoadsPerBlock = Number(e.target.value) || 4;
-      saveState();
-    });
-
-    // team add
-    $("#team-add-form").addEventListener("submit", e => {
-      e.preventDefault();
-      const name = $("#team-name").value.trim();
-      const email = $("#team-email").value.trim();
-      const role = $("#team-role").value;
-      if (!name || !email) return;
-      APP.users.push({ name, email, password: "changeme", role });
-      saveState();
-      renderTeam();
-      e.target.reset();
-    });
-
-    // initial renders
-    renderOrdersTable();
-    renderCalendar();
-    renderTruckloads();
-    renderDock();
-    renderToday();
-    renderMetrics();
-    renderHistory();
-    renderTeam();
-
-    // set settings UI
-    $("#lang-select").value = APP.settings.language;
-    $("#max-loads").value = APP.settings.maxLoadsPerBlock;
-  }
-});
+// --- INIT -----------------------------------------------------
+renderTeam();
+renderHistory();
