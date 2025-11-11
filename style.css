@@ -1,0 +1,24 @@
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  margin: 0; display: flex;
+  transition: background 0.3s, color 0.3s;
+}
+.light-mode { background-color: #f4f6f8; color: #333; }
+.dark-mode { background-color: #1e1e1e; color: #f5f5f5; }
+.sidebar {
+  width: 250px; background: #ffffff;
+  box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+  padding: 20px; height: 100vh;
+}
+.sidebar ul { list-style: none; padding: 0; }
+.sidebar ul li { padding: 10px; cursor: pointer; border-radius: 5px; transition: background 0.2s; }
+.sidebar ul li:hover { background: #eaeaea; }
+.main-content { flex-grow: 1; padding: 30px; }
+.tab { display: none; }
+.tab.active { display: block; }
+.metrics-cards { display: flex; gap: 15px; flex-wrap: wrap; }
+.card {
+  background: #ffffff; border-radius: 8px; padding: 20px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+  width: 200px; text-align: center;
+}
