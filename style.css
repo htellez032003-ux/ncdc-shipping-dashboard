@@ -73,7 +73,8 @@ label {
   font-size: 0.8rem;
 }
 
-input, select {
+input,
+select {
   width: 100%;
   padding: 7px 8px;
   border-radius: 6px;
@@ -96,7 +97,7 @@ input, select {
 }
 
 .btn.secondary {
-  background: rgba(0,0,0,0.03);
+  background: rgba(0, 0, 0, 0.03);
   color: var(--text);
 }
 
@@ -244,7 +245,7 @@ input, select {
 }
 
 .data-table tr:hover {
-  background: rgba(0,0,0,0.015);
+  background: rgba(0, 0, 0, 0.015);
 }
 
 /* CALENDAR */
@@ -267,7 +268,7 @@ input, select {
 }
 
 .calendar-day {
-  background: rgba(0,0,0,0.02);
+  background: rgba(0, 0, 0, 0.02);
   border: 1px solid transparent;
   text-align: center;
   padding: 6px 0;
@@ -278,7 +279,7 @@ input, select {
 .calendar-day:hover,
 .calendar-day.active {
   border: 1px solid var(--accent);
-  background: rgba(43,108,232,0.07);
+  background: rgba(43, 108, 232, 0.07);
 }
 
 .calendar-detail {
@@ -374,7 +375,8 @@ input, select {
   gap: 10px;
   margin-top: 12px;
 }
-/* TAB BEHAVIOR */
+
+/* TAB VISIBILITY FIX */
 .tab-panel {
   display: none;
 }
