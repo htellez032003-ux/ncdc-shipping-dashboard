@@ -374,3 +374,10 @@ input, select {
   gap: 10px;
   margin-top: 12px;
 }
+/* TAB BEHAVIOR */
+.tab-panel {
+  display: none;
+}
+.tab-panel.active {
+  display: block;
+}
