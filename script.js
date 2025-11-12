@@ -878,8 +878,7 @@ function renderTruckloads(){
     `;
     tb.appendChild(tr);
   });
-
-  });
+  }
 
   document.querySelectorAll(".tl-row").forEach(row => row.onclick = () => {
     const id = row.dataset.id;
