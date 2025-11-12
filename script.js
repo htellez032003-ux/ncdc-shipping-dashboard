@@ -1,47 +1,110 @@
 // script.js
 
-// --- STATE ----------------------------------------------------
-let orders = [];           // all parsed orders from CSV
-let filteredOrders = [];   // after search/date filter
-let selectedPOs = new Set();
-let truckloads = [];       // created truckloads
-let historyLoads = [];     // departed
-let team = [
-  { name: "Router 1", role: "router", shift: "1st", active: true },
-  { name: "Dock Lead", role: "dock", shift: "1st", active: true }
-];
+// ================== STORAGE KEY ==================
+const STORAGE_KEY = "ncdcShippingStateV2";
 
-// --- LOGIN ----------------------------------------------------
-const loginScreen = document.getElementById("login-screen");
-const appShell = document.getElementById("app-shell");
-const loginBtn = document.getElementById("login-btn");
-const loginError = document.getElementById("login-error");
-const loginEmail = document.getElementById("login-email");
-const loginPassword = document.getElementById("login-password");
-
-loginBtn.addEventListener("click", () => {
-  const ok =
-    loginEmail.value.trim() === "htellez032003@gmail.com" &&
-    loginPassword.value.trim() === "Ltapaprel040523";
-
-  if (ok) {
-    loginError.classList.add("hidden");
-    loginScreen.classList.add("hidden");
-    appShell.classList.remove("hidden");
-  } else {
-    loginError.classList.remove("hidden");
+// ================== GLOBAL STATE =================
+const appState = {
+  orders: [],      // csv rows
+  truckloads: [],  // physical trucks (auto or manual)
+  history: [],
+  team: [
+    { name: "Router 1", role: "router", shift: "1st", active: true },
+    { name: "Dock Lead", role: "dock", shift: "1st", active: true }
+  ],
+  settings: {
+    maxLTL: 4,
+    maxTL: 3,
+    maxFloor: 2
   }
-});
+};
 
-document.getElementById("logout-btn").addEventListener("click", () => {
-  appShell.classList.add("hidden");
-  loginScreen.classList.remove("hidden");
-});
+// ================== HELPERS =======================
+function $(id) { return document.getElementById(id); }
 
-// --- TABS -----------------------------------------------------
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    Object.assign(appState, parsed);
+  } catch (e) {
+    console.warn("load failed", e);
+  }
+}
+
+function saveState() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
+  } catch (e) {
+    console.warn("save failed", e);
+  }
+}
+
+function mostCommon(arr) {
+  const counts = {};
+  let best = "";
+  let max = 0;
+  for (const v of arr) {
+    const k = v || "";
+    counts[k] = (counts[k] || 0) + 1;
+    if (counts[k] > max) {
+      max = counts[k];
+      best = k;
+    }
+  }
+  return best;
+}
+
+function sumNumber(rows, col) {
+  return rows.reduce((sum, r) => {
+    const n = Number((r[col] || "").toString().replace(/,/g, "")) || 0;
+    return sum + n;
+  }, 0);
+}
+
+function earliestDate(arr) {
+  const dates = arr
+    .map(d => d && d.trim())
+    .filter(Boolean)
+    .map(d => new Date(d));
+  if (!dates.length) return "";
+  dates.sort((a, b) => a - b);
+  const first = dates[0];
+  if (isNaN(first.getTime())) return "";
+  return first.toISOString().slice(0, 10);
+}
+
+// ================== LOGIN (if present) ==============
+const loginBtn = $("login-btn");
+if (loginBtn) {
+  loginBtn.addEventListener("click", () => {
+    const loginEmail = $("login-email").value.trim();
+    const loginPassword = $("login-password").value.trim();
+    const ok =
+      loginEmail === "htellez032003@gmail.com" &&
+      loginPassword === "Ltapaprel040523";
+    if (ok) {
+      $("login-error").classList.add("hidden");
+      $("login-screen").classList.add("hidden");
+      $("app-shell").classList.remove("hidden");
+    } else {
+      $("login-error").classList.remove("hidden");
+    }
+  });
+}
+
+const logoutBtn = $("logout-btn");
+if (logoutBtn) {
+  logoutBtn.addEventListener("click", () => {
+    $("app-shell").classList.add("hidden");
+    $("login-screen").classList.remove("hidden");
+  });
+}
+
+// ================== TABS ============================
 const navLinks = document.querySelectorAll(".nav-link");
 const tabPanels = document.querySelectorAll(".tab-panel");
-
 navLinks.forEach(btn => {
   btn.addEventListener("click", () => {
     navLinks.forEach(b => b.classList.remove("active"));
@@ -54,9 +117,11 @@ navLinks.forEach(btn => {
   });
 });
 
-// --- CSV UPLOAD -----------------------------------------------
-const csvInput = document.getElementById("orders-csv");
-csvInput.addEventListener("change", handleCSVUpload);
+// ================== CSV UPLOAD ======================
+const csvInput = $("orders-csv");
+if (csvInput) {
+  csvInput.addEventListener("change", handleCSVUpload);
+}
 
 function handleCSVUpload(e) {
   const file = e.target.files[0];
@@ -65,18 +130,20 @@ function handleCSVUpload(e) {
   reader.onload = evt => {
     const text = evt.target.result;
     parseCSV(text);
-    document.getElementById("csv-updated").textContent =
-      "CSV updated: " + new Date().toLocaleString();
+    if ($("csv-updated")) {
+      $("csv-updated").textContent =
+        "CSV updated: " + new Date().toLocaleString();
+    }
   };
   reader.readAsText(file);
 }
 
-// parse CSV into array of objects
 function parseCSV(text) {
   const lines = text.split(/\r?\n/).filter(l => l.trim() !== "");
+  if (!lines.length) return;
   const header = lines[0].split(",").map(h => h.trim());
-  orders = lines.slice(1).map(line => {
-    const cols = splitCSVLine(line);
+  const rows = lines.slice(1).map(line => {
+    const cols = line.split(",");
     const obj = {};
     header.forEach((h, i) => {
       obj[h] = cols[i] ? cols[i].trim() : "";
@@ -84,351 +151,464 @@ function parseCSV(text) {
     return obj;
   });
 
-  // default: no filter
-  filteredOrders = orders.slice();
+  appState.orders = rows;
+
+  // rebuild truckloads from CSV while preserving manual ones
+  rebuildTruckloadsFromOrders();
+
   renderOrders();
+  renderTruckloads();
+  renderDock();
+  renderTodays();
+  renderTodaysFull();
+  renderHistory();
+  renderTeam();
+  renderMetrics();
+  saveState();
 }
 
-// simple CSV splitter (no quotes nested for now)
-function splitCSVLine(line) {
-  // very basic – user said leave advanced for later
-  return line.split(",");
+// ================== GROUPING ENGINE ==================
+//
+// Rules:
+// 1. rows with Author#: 1 physical truck per Author#
+// 2. rows without Author#: LTL bucket by (Shipper, Ready Date)
+// 3. inside each load build nested: Master BOL# -> BOL# -> POs
+//
+function rebuildTruckloadsFromOrders() {
+  const existingManual = appState.truckloads.filter(tl => !tl.autoGenerated);
+  const autoLoads = [];
+
+  // 1) rows with Author#
+  const withAuthor = appState.orders.filter(o => (o["Author#"] || "").trim() !== "");
+  const byAuthor = new Map();
+  for (const o of withAuthor) {
+    const author = (o["Author#"] || "").trim();
+    if (!byAuthor.has(author)) byAuthor.set(author, []);
+    byAuthor.get(author).push(o);
+  }
+
+  for (const [author, rows] of byAuthor.entries()) {
+    autoLoads.push(buildLoadFromRows({
+      loadId: author,
+      rows,
+      loadTypeHint: "Truckload" // can be Truckload or Floorload, CSV doesn't tell
+    }));
+  }
+
+  // 2) rows without Author#  -> LTL
+  const noAuthor = appState.orders.filter(o => (o["Author#"] || "").trim() === "");
+  const ltlMap = new Map();
+  for (const o of noAuthor) {
+    const carrier = (o["Shipper"] || "").trim();
+    const ready = (o["Ready Date"] || "").trim();
+    if (!carrier || !ready) continue;
+    const key = carrier + "||" + ready;
+    if (!ltlMap.has(key)) ltlMap.set(key, []);
+    ltlMap.get(key).push(o);
+  }
+  for (const [key, rows] of ltlMap.entries()) {
+    autoLoads.push(buildLoadFromRows({
+      loadId: "LTL-" + key,
+      rows,
+      loadTypeHint: "LTL"
+    }));
+  }
+
+  // merge: manual loads stay, auto loads replace old auto loads entirely
+  appState.truckloads = [...existingManual, ...autoLoads];
 }
 
-// --- RENDER ORDERS --------------------------------------------
-const ordersBody = document.getElementById("orders-body");
-const selectedCountEl = document.getElementById("selected-count");
+function buildLoadFromRows({ loadId, rows, loadTypeHint }) {
+  const customer = mostCommon(rows.map(r => r["Cust Name"] || ""));
+  const carrier = mostCommon(rows.map(r => r["Shipper"] || ""));
+  const pickupDate = earliestDate(rows.map(r => r["Ready Date"] || ""));
+  const bolCommon = mostCommon(rows.map(r => r["BOL#"] || ""));
+  const cartons = sumNumber(rows, "Est. Cartons");
+  const pallets = sumNumber(rows, "Est. Pallet");
+  const weight = sumNumber(rows, "Total Weight");
+  const cube = sumNumber(rows, "Total Cubic");
+
+  // build nested master->bol->po
+  const masterGroups = buildMasterGroups(rows);
+
+  return {
+    loadId,
+    autoGenerated: true,
+    loadType: loadTypeHint || "Truckload",
+    customer,
+    carrier,
+    pickupDate,
+    bol: bolCommon,
+    cartons,
+    pallets,
+    weight,
+    cube,
+    stagedLocation: "",
+    assignedTo: "",
+    status: "Unstaged",
+    masterGroups,
+    departed: false
+  };
+}
+
+function buildMasterGroups(rows) {
+  // group by Master BOL# first
+  const byMaster = new Map();
+  for (const r of rows) {
+    const mbol = (r["Master BOL#"] || "").trim();
+    const list = byMaster.get(mbol) || [];
+    list.push(r);
+    byMaster.set(mbol, list);
+  }
+
+  const result = [];
+  for (const [mbol, mrows] of byMaster.entries()) {
+    // inside master, group by BOL#
+    const byBol = new Map();
+    for (const r of mrows) {
+      const bol = (r["BOL#"] || "").trim();
+      const blist = byBol.get(bol) || [];
+      blist.push(r);
+      byBol.set(bol, blist);
+    }
+    const bols = [];
+    for (const [bol, bRows] of byBol.entries()) {
+      bols.push({
+        bol,
+        pos: bRows.map(r => ({
+          po: r["PO Num"] || "",
+          customer: r["Cust Name"] || "",
+          cartons: Number(r["Est. Cartons"] || 0),
+          pallets: Number(r["Est. Pallet"] || 0)
+        }))
+      });
+    }
+    result.push({
+      masterBol: mbol, // can be "" if none
+      bols
+    });
+  }
+  return result;
+}
+
+// ================== ORDERS RENDER ===================
+const selectedPOs = new Set();
+let filteredOrders = [];
 
 function renderOrders() {
+  const ordersBody = $("orders-body");
+  if (!ordersBody) return;
+
+  if (!filteredOrders.length) filteredOrders = appState.orders.slice();
+
   ordersBody.innerHTML = "";
-  filteredOrders.forEach((ord, idx) => {
+  filteredOrders.forEach(o => {
+    const po = o["PO Num"] || "";
     const tr = document.createElement("tr");
-
-    // key columns (must match your new headers if present)
-    const division = ord["Division"] || "";
-    const bol = ord["BOL#"] || "";
-    const mbol = ord["Master BOL#"] || "";
-    const po = ord["PO Num"] || "";
-    const customer = ord["Customer"] || "";
-    const custName = ord["Cust Name"] || "";
-    const shipper = ord["Shipper"] || "";
-    const ttlQty = ord["TTL QTY"] || "";
-    const ttlAmt = ord["TTL Amt"] || "";
-    const totalWeight = ord["Total Weight"] || "";
-    const totalCubic = ord["Total Cubic"] || "";
-    const estCartons = ord["Est. Cartons"] || "";
-    const estPallet = ord["Est. Pallet"] || "";
-    const pickProc = ord["Pick Proc Date"] || "";
-    const startDate = ord["Start Date"] || "";
-    const cancelDate = ord["Cancel Date"] || "";
-    const router = ord["Router"] || "";
-    const routeDate = ord["Route Date"] || "";
-    const schedDate = ord["Scheduled Date"] || "";
-    const readyDate = ord["Ready Date"] || "";
-    const author = ord["Author#"] || "";
-    const ptStatus = ord["PT STATUS"] || "";
-
-    const isSelected = selectedPOs.has(po);
-
     tr.innerHTML = `
-      <td><input type="checkbox" class="po-check" data-po="${po}" ${isSelected ? "checked" : ""}></td>
-      <td>${division}</td>
-      <td>${bol}</td>
-      <td>${mbol}</td>
+      <td><input type="checkbox" class="po-check" data-po="${po}" ${selectedPOs.has(po) ? "checked" : ""}></td>
+      <td>${o["Division"] || ""}</td>
+      <td>${o["BOL#"] || ""}</td>
+      <td>${o["Master BOL#"] || ""}</td>
       <td>${po}</td>
-      <td>${customer}</td>
-      <td>${custName}</td>
-      <td>${shipper}</td>
-      <td>${ttlQty}</td>
-      <td>${ttlAmt}</td>
-      <td>${totalWeight}</td>
-      <td>${totalCubic}</td>
-      <td>${estCartons}</td>
-      <td>${estPallet}</td>
-      <td>${pickProc}</td>
-      <td>${startDate}</td>
-      <td>${cancelDate}</td>
-      <td>${router}</td>
-      <td>${routeDate}</td>
-      <td>${schedDate}</td>
-      <td>${readyDate}</td>
-      <td>${author}</td>
-      <td>${ptStatus}</td>
-      <td>${""}</td>
+      <td>${o["Customer"] || ""}</td>
+      <td>${o["Cust Name"] || ""}</td>
+      <td>${o["Shipper"] || ""}</td>
+      <td>${o["TTL QTY"] || ""}</td>
+      <td>${o["TTL Amt"] || ""}</td>
+      <td>${o["Total Weight"] || ""}</td>
+      <td>${o["Total Cubic"] || ""}</td>
+      <td>${o["Est. Cartons"] || ""}</td>
+      <td>${o["Est. Pallet"] || ""}</td>
+      <td>${o["Pick Proc Date"] || ""}</td>
+      <td>${o["Start Date"] || ""}</td>
+      <td>${o["Cancel Date"] || ""}</td>
+      <td>${o["Router"] || ""}</td>
+      <td>${o["Route Date"] || ""}</td>
+      <td>${o["Scheduled Date"] || ""}</td>
+      <td>${o["Ready Date"] || ""}</td>
+      <td>${o["Author#"] || ""}</td>
+      <td>${o["PT STATUS"] || ""}</td>
+      <td></td>
     `;
     ordersBody.appendChild(tr);
   });
 
-  // attach checkbox handlers
   document.querySelectorAll(".po-check").forEach(chk => {
     chk.addEventListener("change", e => {
       const po = e.target.dataset.po;
       if (e.target.checked) selectedPOs.add(po);
       else selectedPOs.delete(po);
-      selectedCountEl.textContent = selectedPOs.size;
+      updateSelectedCount();
     });
   });
 
-  // update selected count
-  selectedCountEl.textContent = selectedPOs.size;
+  updateSelectedCount();
 }
 
-// select-all should only select visible rows
-document.getElementById("select-all-orders").addEventListener("change", e => {
-  const checked = e.target.checked;
-  document.querySelectorAll("#orders-body .po-check").forEach(chk => {
-    chk.checked = checked;
-    const po = chk.dataset.po;
-    if (checked) selectedPOs.add(po);
-    else selectedPOs.delete(po);
+function updateSelectedCount() {
+  const el = $("selected-count");
+  if (el) el.textContent = selectedPOs.size;
+}
+
+const ordersSearch = $("orders-search");
+if (ordersSearch) {
+  ordersSearch.addEventListener("input", e => {
+    const q = e.target.value.toLowerCase();
+    filteredOrders = appState.orders.filter(o => {
+      return (
+        (o["PO Num"] || "").toLowerCase().includes(q) ||
+        (o["Cust Name"] || "").toLowerCase().includes(q) ||
+        (o["Customer"] || "").toLowerCase().includes(q) ||
+        (o["Shipper"] || "").toLowerCase().includes(q) ||
+        (o["BOL#"] || "").toLowerCase().includes(q)
+      );
+    });
+    renderOrders();
   });
-  selectedCountEl.textContent = selectedPOs.size;
-});
+}
 
-// --- SEARCH / FILTERS -----------------------------------------
-document.getElementById("orders-search").addEventListener("input", e => {
-  const q = e.target.value.toLowerCase();
-  filteredOrders = orders.filter(o => {
-    return (
-      (o["PO Num"] || "").toLowerCase().includes(q) ||
-      (o["Customer"] || "").toLowerCase().includes(q) ||
-      (o["Cust Name"] || "").toLowerCase().includes(q) ||
-      (o["Shipper"] || "").toLowerCase().includes(q) ||
-      (o["BOL#"] || "").toLowerCase().includes(q)
-    );
+const applyDate = $("apply-date-filter");
+if (applyDate) {
+  applyDate.addEventListener("click", () => {
+    const col = $("date-column-select").value;
+    const from = $("date-from").value;
+    const to = $("date-to").value;
+    filteredOrders = appState.orders.filter(o => {
+      const v = (o[col] || "").split(" ")[0];
+      if (!v) return false;
+      if (from && v < from) return false;
+      if (to && v > to) return false;
+      return true;
+    });
+    renderOrders();
   });
-  renderOrders();
-});
+}
 
-document.getElementById("apply-date-filter").addEventListener("click", () => {
-  const col = document.getElementById("date-column-select").value;
-  const from = document.getElementById("date-from").value;
-  const to = document.getElementById("date-to").value;
-  filteredOrders = orders.filter(o => {
-    const val = (o[col] || "").split(" ")[0]; // in case time added later
-    if (!val) return false;
-    if (from && val < from) return false;
-    if (to && val > to) return false;
-    return true;
+const clearFilters = $("clear-filters");
+if (clearFilters) {
+  clearFilters.addEventListener("click", () => {
+    filteredOrders = appState.orders.slice();
+    if ($("orders-search")) $("orders-search").value = "";
+    if ($("date-from")) $("date-from").value = "";
+    if ($("date-to")) $("date-to").value = "";
+    renderOrders();
   });
-  renderOrders();
-});
+}
 
-document.getElementById("clear-filters").addEventListener("click", () => {
-  filteredOrders = orders.slice();
-  document.getElementById("orders-search").value = "";
-  document.getElementById("date-from").value = "";
-  document.getElementById("date-to").value = "";
-  renderOrders();
-});
+const selectAllOrders = $("select-all-orders");
+if (selectAllOrders) {
+  selectAllOrders.addEventListener("change", e => {
+    const checked = e.target.checked;
+    document.querySelectorAll("#orders-body .po-check").forEach(chk => {
+      chk.checked = checked;
+      const po = chk.dataset.po;
+      if (checked) selectedPOs.add(po);
+      else selectedPOs.delete(po);
+    });
+    updateSelectedCount();
+  });
+}
 
-// --- CALENDAR (orders) ----------------------------------------
-const calendarEl = document.getElementById("orders-calendar");
-const calendarDetail = document.getElementById("calendar-detail");
-renderCalendar();
-
-function renderCalendar() {
+// ================== SIMPLE CALENDAR =====================
+const calendarEl = $("orders-calendar");
+const calendarDetail = $("calendar-detail");
+if (calendarEl) {
   calendarEl.innerHTML = "";
-  // just render 30 days
   for (let d = 1; d <= 30; d++) {
     const btn = document.createElement("button");
     btn.textContent = d;
     btn.addEventListener("click", () => {
-      calendarDetail.textContent = "Availability for day " + d + " – will show LTL / TL / Floorload slots.";
+      if (calendarDetail) {
+        calendarDetail.textContent =
+          "Availability for day " + d + " – LTL/TL/Floorload slots.";
+      }
     });
     calendarEl.appendChild(btn);
   }
 }
 
-// --- CREATE TRUCKLOAD MODAL -----------------------------------
-const createTLBtn = document.getElementById("create-truckload-btn");
-const modalOverlay = document.getElementById("modal-overlay");
-const modalSelectedPOs = document.getElementById("modal-selected-pos");
-const tlSave = document.getElementById("tl-save");
-const tlCancel = document.getElementById("tl-cancel");
+// ================== MANUAL TRUCKLOAD MODAL ==============
+const createTLBtn = $("create-truckload-btn");
+const modalOverlay = $("modal-overlay");
+if (createTLBtn && modalOverlay) {
+  createTLBtn.addEventListener("click", () => {
+    if (selectedPOs.size === 0) {
+      alert("Select at least one PO line first.");
+      return;
+    }
+    $("modal-selected-pos").textContent =
+      "POs: " + Array.from(selectedPOs).join(", ");
+    modalOverlay.classList.remove("hidden");
+  });
+}
+const tlCancel = $("tl-cancel");
+if (tlCancel && modalOverlay) {
+  tlCancel.addEventListener("click", () => {
+    modalOverlay.classList.add("hidden");
+  });
+}
+const tlSave = $("tl-save");
+if (tlSave && modalOverlay) {
+  tlSave.addEventListener("click", () => {
+    const loadId =
+      $("tl-load-id").value.trim() ||
+      "LOAD-" + (appState.truckloads.length + 1);
+    const tl = {
+      loadId,
+      autoGenerated: false,
+      loadType: $("tl-load-type").value,
+      pickupDate: $("tl-pickup-date").value,
+      carrier: $("tl-carrier").value,
+      customer: $("tl-customer").value,
+      bol: $("tl-bol").value,
+      cartons: Number($("tl-cartons").value) || 0,
+      pallets: Number($("tl-pallets").value) || 0,
+      weight: 0,
+      cube: 0,
+      stagedLocation: "",
+      assignedTo: "",
+      status: "Unstaged",
+      masterGroups: [],
+      departed: false
+    };
+    appState.truckloads.push(tl);
+    renderTruckloads();
+    renderDock();
+    renderTodays();
+    renderTodaysFull();
+    renderMetrics();
+    saveState();
+    modalOverlay.classList.add("hidden");
+  });
+}
 
-createTLBtn.addEventListener("click", () => {
-  if (selectedPOs.size === 0) {
-    alert("Select at least one PO line first.");
-    return;
-  }
-  modalSelectedPOs.textContent = "POs: " + Array.from(selectedPOs).join(", ");
-  modalOverlay.classList.remove("hidden");
-});
-
-tlCancel.addEventListener("click", () => {
-  modalOverlay.classList.add("hidden");
-});
-
-tlSave.addEventListener("click", () => {
-  const loadId = document.getElementById("tl-load-id").value.trim() || "LOAD-" + (truckloads.length + 1);
-  const loadType = document.getElementById("tl-load-type").value;
-  const pickupDate = document.getElementById("tl-pickup-date").value;
-  const carrier = document.getElementById("tl-carrier").value;
-  const customer = document.getElementById("tl-customer").value;
-  const bol = document.getElementById("tl-bol").value;
-  const cartons = Number(document.getElementById("tl-cartons").value) || 0;
-  const pallets = Number(document.getElementById("tl-pallets").value) || 0;
-
-  const tl = {
-    loadId,
-    loadType,
-    pickupDate,
-    carrier,
-    customer,
-    bol,
-    cartons,
-    pallets,
-    status: "Unstaged",
-    stagedLocation: "",
-    assignedTo: "",
-    departed: false
-  };
-
-  truckloads.push(tl);
-
-  // also push to history later when departed
-  renderTruckloads();
-  renderDock();
-  renderTodays();
-  renderTodaysFull();
-  modalOverlay.classList.add("hidden");
-  // clear selection?
-  // selectedPOs.clear();
-  selectedCountEl.textContent = selectedPOs.size;
-});
-
-// --- RENDER DOCK ----------------------------------------------
+// ================== DOCK RENDER =========================
 function renderDock() {
-  const dockBody = document.getElementById("dock-body");
-  const dockPreviewBody = document.getElementById("dock-preview-body");
-  dockBody.innerHTML = "";
-  dockPreviewBody.innerHTML = "";
+  const dockBody = $("dock-body");
+  const dockPreviewBody = $("dock-preview-body");
+  if (dockBody) dockBody.innerHTML = "";
+  if (dockPreviewBody) dockPreviewBody.innerHTML = "";
 
-  truckloads.forEach(tl => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
+  appState.truckloads.forEach(tl => {
+    const row = `
       <td>${tl.loadId}</td>
       <td>${tl.customer || ""}</td>
       <td>${tl.carrier || ""}</td>
-      <td>${tl.loadType}</td>
+      <td>${tl.loadType || ""}</td>
       <td>${tl.pickupDate || ""}</td>
-      <td>${tl.cartons}</td>
-      <td>${tl.pallets}</td>
+      <td>${tl.cartons || 0}</td>
+      <td>${tl.pallets || 0}</td>
       <td>${tl.stagedLocation || ""}</td>
       <td>${tl.assignedTo || ""}</td>
-      <td>${tl.status}</td>
-      <td>
-        <button class="btn tiny" data-assign="${tl.loadId}">Assign</button>
-        <button class="btn tiny secondary" data-stage="${tl.loadId}">Fully Staged</button>
-      </td>
+      <td>${tl.status || ""}</td>
     `;
-    dockBody.appendChild(tr);
-
-    const tr2 = document.createElement("tr");
-    tr2.innerHTML = `
-      <td>${tl.loadId}</td>
-      <td>${tl.customer || ""}</td>
-      <td>${tl.carrier || ""}</td>
-      <td>${tl.loadType}</td>
-      <td>${tl.pickupDate || ""}</td>
-      <td>${tl.cartons}</td>
-      <td>${tl.pallets}</td>
-      <td>${tl.stagedLocation || ""}</td>
-      <td>${tl.assignedTo || ""}</td>
-      <td>${tl.status}</td>
-    `;
-    dockPreviewBody.appendChild(tr2);
+    if (dockBody) {
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        row +
+        `<td>
+          <button class="btn tiny" data-assign="${tl.loadId}">Assign</button>
+          <button class="btn tiny secondary" data-stage="${tl.loadId}">Fully Staged</button>
+        </td>`;
+      dockBody.appendChild(tr);
+    }
+    if (dockPreviewBody) {
+      const tr2 = document.createElement("tr");
+      tr2.innerHTML = row;
+      dockPreviewBody.appendChild(tr2);
+    }
   });
 
-  // attach actions
   document.querySelectorAll("[data-assign]").forEach(btn => {
     btn.addEventListener("click", () => {
       const id = btn.dataset.assign;
-      const name = prompt("Assign to who?");
-      const found = truckloads.find(t => t.loadId === id);
-      if (found) {
-        found.assignedTo = name || "";
-        found.status = "Being staged";
+      const who = prompt("Assign to who?");
+      const tl = appState.truckloads.find(t => t.loadId === id);
+      if (tl) {
+        tl.assignedTo = who || "";
+        tl.status = "Being staged";
         renderDock();
         renderTodays();
         renderTodaysFull();
+        renderMetrics();
+        saveState();
       }
     });
   });
   document.querySelectorAll("[data-stage]").forEach(btn => {
     btn.addEventListener("click", () => {
       const id = btn.dataset.stage;
-      const found = truckloads.find(t => t.loadId === id);
-      if (found) {
-        found.status = "Fully staged";
+      const tl = appState.truckloads.find(t => t.loadId === id);
+      if (tl) {
+        tl.status = "Fully staged";
         renderDock();
         renderTodays();
         renderTodaysFull();
+        renderMetrics();
+        saveState();
       }
     });
   });
 }
 
-// --- RENDER TODAY'S PICKUPS (preview + full) ------------------
+// ================== TODAY'S PICKUPS ====================
 function renderTodays() {
-  const todayBody = document.getElementById("today-body");
-  todayBody.innerHTML = "";
-
-  let totalTrucks = 0;
-  let atDoor = 0;
-  let departed = 0;
-  let totalCartons = 0;
-  let totalDollars = 0;
-
-  truckloads.forEach(tl => {
-    totalTrucks++;
-    totalCartons += tl.cartons;
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${tl.loadId}</td>
-      <td>${tl.customer || ""}</td>
-      <td>${tl.carrier || ""}</td>
-      <td>${tl.loadType}</td>
-      <td>${tl.pickupDate || ""}</td>
-      <td>${tl.cartons}</td>
-      <td>${tl.status}</td>
-      <td><button class="btn tiny" data-arrived="${tl.loadId}">Arrived</button></td>
-      <td><button class="btn tiny secondary" data-departed="${tl.loadId}">Departed</button></td>
-    `;
-    todayBody.appendChild(tr);
-  });
-
-  document.getElementById("tp-total-trucks").textContent = totalTrucks;
-  document.getElementById("tp-at-door").textContent = atDoor;
-  document.getElementById("tp-departed").textContent = departed;
-  document.getElementById("tp-cartons").textContent = totalCartons;
-  document.getElementById("tp-dollars").textContent = "$" + totalDollars;
-
-  attachArrivedDeparted();
-}
-
-function renderTodaysFull() {
-  const body = document.getElementById("today-full-body");
+  const body = $("today-body");
   if (!body) return;
   body.innerHTML = "";
 
-  truckloads.forEach(tl => {
+  let totalTrucks = 0, atDoor = 0, departed = 0, totalCartons = 0;
+
+  appState.truckloads.forEach(tl => {
+    totalTrucks++;
+    totalCartons += tl.cartons || 0;
+    if (tl.status === "At door") atDoor++;
+    if (tl.status === "Departed") departed++;
+
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${tl.loadId}</td>
       <td>${tl.customer || ""}</td>
       <td>${tl.carrier || ""}</td>
-      <td>${tl.loadType}</td>
+      <td>${tl.loadType || ""}</td>
       <td>${tl.pickupDate || ""}</td>
-      <td>${tl.cartons}</td>
-      <td>${tl.status}</td>
+      <td>${tl.cartons || 0}</td>
+      <td>${tl.status || ""}</td>
       <td><button class="btn tiny" data-arrived="${tl.loadId}">Arrived</button></td>
       <td><button class="btn tiny secondary" data-departed="${tl.loadId}">Departed</button></td>
     `;
     body.appendChild(tr);
   });
 
+  if ($("tp-total-trucks")) $("tp-total-trucks").textContent = totalTrucks;
+  if ($("tp-at-door")) $("tp-at-door").textContent = atDoor;
+  if ($("tp-departed")) $("tp-departed").textContent = departed;
+  if ($("tp-cartons")) $("tp-cartons").textContent = totalCartons;
+  if ($("tp-dollars")) $("tp-dollars").textContent = "$0";
+
+  attachArrivedDeparted();
+}
+
+function renderTodaysFull() {
+  const body = $("today-full-body");
+  if (!body) return;
+  body.innerHTML = "";
+  appState.truckloads.forEach(tl => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${tl.loadId}</td>
+      <td>${tl.customer || ""}</td>
+      <td>${tl.carrier || ""}</td>
+      <td>${tl.loadType || ""}</td>
+      <td>${tl.pickupDate || ""}</td>
+      <td>${tl.cartons || 0}</td>
+      <td>${tl.status || ""}</td>
+      <td><button class="btn tiny" data-arrived="${tl.loadId}">Arrived</button></td>
+      <td><button class="btn tiny secondary" data-departed="${tl.loadId}">Departed</button></td>
+    `;
+    body.appendChild(tr);
+  });
   attachArrivedDeparted();
 }
 
@@ -436,22 +616,24 @@ function attachArrivedDeparted() {
   document.querySelectorAll("[data-arrived]").forEach(btn => {
     btn.addEventListener("click", () => {
       const id = btn.dataset.arrived;
-      const tl = truckloads.find(t => t.loadId === id);
+      const tl = appState.truckloads.find(t => t.loadId === id);
       if (tl) {
         tl.status = "At door";
         renderTodays();
         renderTodaysFull();
+        renderMetrics();
+        saveState();
       }
     });
   });
   document.querySelectorAll("[data-departed]").forEach(btn => {
     btn.addEventListener("click", () => {
       const id = btn.dataset.departed;
-      const tl = truckloads.find(t => t.loadId === id);
+      const tl = appState.truckloads.find(t => t.loadId === id);
       if (tl) {
         tl.status = "Departed";
         tl.departed = true;
-        historyLoads.push({
+        appState.history.push({
           loadId: tl.loadId,
           customer: tl.customer,
           carrier: tl.carrier,
@@ -462,59 +644,60 @@ function attachArrivedDeparted() {
         renderTodays();
         renderTodaysFull();
         renderHistory();
+        renderMetrics();
+        saveState();
       }
     });
   });
 }
 
-// --- RENDER TRUCKLOADS ----------------------------------------
+// ================== TRUCKLOADS TAB ====================
 function renderTruckloads() {
-  const body = document.getElementById("truckloads-body");
-  const bodyFull = document.getElementById("truckloads-full-body");
+  const body = $("truckloads-body");
+  const bodyFull = $("truckloads-full-body");
   if (body) body.innerHTML = "";
   if (bodyFull) bodyFull.innerHTML = "";
 
-  truckloads.forEach(tl => {
+  appState.truckloads.forEach(tl => {
     if (body) {
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>${tl.loadId}</td>
         <td>${tl.customer || ""}</td>
         <td>${tl.carrier || ""}</td>
-        <td>${tl.loadType}</td>
+        <td>${tl.loadType || ""}</td>
         <td>${tl.pickupDate || ""}</td>
-        <td>${tl.cartons}</td>
-        <td>${tl.status}</td>
+        <td>${tl.cartons || 0}</td>
+        <td>${tl.status || ""}</td>
       `;
       body.appendChild(tr);
     }
-
     if (bodyFull) {
       const tr2 = document.createElement("tr");
       tr2.innerHTML = `
         <td>${tl.loadId}</td>
         <td>${tl.customer || ""}</td>
         <td>${tl.carrier || ""}</td>
-        <td>${tl.loadType}</td>
+        <td>${tl.loadType || ""}</td>
         <td>${tl.pickupDate || ""}</td>
-        <td>${""}</td>
-        <td>${""}</td>
-        <td>${tl.cartons}</td>
-        <td>${tl.pallets}</td>
+        <td>${tl.weight || ""}</td>
+        <td>${tl.cube || ""}</td>
+        <td>${tl.cartons || 0}</td>
+        <td>${tl.pallets || 0}</td>
         <td>${tl.stagedLocation || ""}</td>
-        <td>${tl.status}</td>
+        <td>${tl.status || ""}</td>
       `;
       bodyFull.appendChild(tr2);
     }
   });
 }
 
-// --- HISTORY --------------------------------------------------
+// ================== HISTORY ===========================
 function renderHistory() {
-  const body = document.getElementById("history-body");
+  const body = $("history-body");
   if (!body) return;
   body.innerHTML = "";
-  historyLoads.forEach(h => {
+  appState.history.forEach(h => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${h.loadId}</td>
@@ -528,12 +711,12 @@ function renderHistory() {
   });
 }
 
-// --- TEAM -----------------------------------------------------
+// ================== TEAM =============================
 function renderTeam() {
-  const body = document.getElementById("team-body");
+  const body = $("team-body");
   if (!body) return;
   body.innerHTML = "";
-  team.forEach(t => {
+  appState.team.forEach(t => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${t.name}</td>
@@ -545,37 +728,61 @@ function renderTeam() {
   });
 }
 
-// --- METRICS EXPORT -------------------------------------------
-document.getElementById("metrics-export").addEventListener("click", () => {
-  const rows = [
-    ["Metric", "Value"],
-    ["Trucks Today", truckloads.length],
-    ["Departed", historyLoads.length]
-  ];
-  downloadCSV("metrics.csv", rows);
-});
+// ================== METRICS ===========================
+function renderMetrics() {
+  const mTrucksToday = $("m-trucks-today");
+  const mCartons = $("m-cartons");
+  const mStaged = $("m-staged");
 
-// truckloads export
-document.getElementById("export-csv").addEventListener("click", () => {
-  exportTruckloads("truckloads-preview.csv");
-});
-document.getElementById("export-csv-full").addEventListener("click", () => {
-  exportTruckloads("truckloads.csv");
-});
+  const loads = appState.truckloads;
+  const trucks = loads.length;
+  const cartons = loads.reduce((s, tl) => s + (tl.cartons || 0), 0);
+  const staged = loads.filter(tl => tl.status === "Fully staged").length;
+
+  if (mTrucksToday) mTrucksToday.textContent = trucks;
+  if (mCartons) mCartons.textContent = cartons;
+  if (mStaged) mStaged.textContent = staged;
+}
+
+// ================== EXPORT BUTTONS ====================
+const metricsExportBtn = $("metrics-export");
+if (metricsExportBtn) {
+  metricsExportBtn.addEventListener("click", () => {
+    const rows = [
+      ["Metric","Value"],
+      ["Trucks", appState.truckloads.length],
+      ["Departed", appState.history.length]
+    ];
+    downloadCSV("metrics.csv", rows);
+  });
+}
+
+const exportCsv = $("export-csv");
+if (exportCsv) {
+  exportCsv.addEventListener("click", () => {
+    exportTruckloads("truckloads-preview.csv");
+  });
+}
+const exportCsvFull = $("export-csv-full");
+if (exportCsvFull) {
+  exportCsvFull.addEventListener("click", () => {
+    exportTruckloads("truckloads.csv");
+  });
+}
 
 function exportTruckloads(filename) {
   const rows = [
     ["Load ID","Customer","Carrier","Load Type","Pick Up Date","Total Cartons","Status"]
   ];
-  truckloads.forEach(tl => {
+  appState.truckloads.forEach(tl => {
     rows.push([
       tl.loadId,
       tl.customer || "",
       tl.carrier || "",
-      tl.loadType,
+      tl.loadType || "",
       tl.pickupDate || "",
-      tl.cartons,
-      tl.status
+      tl.cartons || 0,
+      tl.status || ""
     ]);
   });
   downloadCSV(filename, rows);
@@ -592,6 +799,15 @@ function downloadCSV(filename, rows) {
   URL.revokeObjectURL(url);
 }
 
-// --- INIT -----------------------------------------------------
-renderTeam();
-renderHistory();
+// ================== INIT =============================
+(function init() {
+  loadState();
+  renderOrders();
+  renderTruckloads();
+  renderDock();
+  renderTodays();
+  renderTodaysFull();
+  renderHistory();
+  renderTeam();
+  renderMetrics();
+})();
