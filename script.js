@@ -603,9 +603,8 @@ if ($("tl-save")) $("tl-save").onclick = () => {
   renderAll(); saveState();
 };
 
-// ========= SMART AUTO-ROUTER ENGINE =========
+// ========= SMART AUTO-ROUTER ENGINE (center-aware) =========
 function onAutoRouteClicked(){
-  // Source orders: selected POs if any, else current filtered list
   const useSelected = selectedPOs.size>0;
   const rows = useSelected
     ? appState.orders.filter(o => selectedPOs.has(o["PO Num"]||""))
@@ -613,12 +612,12 @@ function onAutoRouteClicked(){
 
   if (!rows.length){ alert("No orders selected or visible."); return; }
 
-  const proposals = buildAutoProposals(rows); // [{id,tmpRows,date,window,carrier,units,cartons,fill}]
+  const proposals = buildAutoProposals(rows);
   renderAutoModal(proposals);
 }
 
+/* --- auto-routing core --- */
 function buildAutoProposals(rows){
-  // Sort by priority then recommended date
   const sorted = [...rows].sort((a,b)=>{
     const p = (a.__priority==="HIGH"?0:a.__priority==="MEDIUM"?1:2) -
               (b.__priority==="HIGH"?0:b.__priority==="MEDIUM"?1:2);
@@ -626,105 +625,132 @@ function buildAutoProposals(rows){
     return (a.__recommendedShip||"").localeCompare(b.__recommendedShip||"");
   });
 
-  // Group by carrier for better consolidation
-  const byCarrier = new Map();
-  sorted.forEach(r=>{
-    const c = (r["Shipper"]||"").trim();
-    if(!byCarrier.has(c)) byCarrier.set(c,[]);
-    byCarrier.get(c).push(r);
-  });
-
   const blocks = appState.settings.blocks.length ? appState.settings.blocks.map(b=>b.window) : ["(unspecified)"];
   const proposals = [];
   let nextLoadNum = appState.truckloads.length + 1;
 
-  for (const [carrier, list] of byCarrier){
-    // iterate orders and pack into loads
-    let idx = 0;
-    while(idx < list.length){
-      let date = list[idx].__recommendedShip;
-      let windowPick = null;
-      // find first window with available slot
+  /* separate store vs. center orders */
+  const direct = sorted.filter(r => !(r["Center"]||"").trim());
+  const centers = sorted.filter(r => (r["Center"]||"").trim());
+
+  // --- handle consolidation-center groups ---
+  const byCenter = new Map();
+  centers.forEach(r=>{
+    const key = (r["Center"]||"").trim()+"|"+(r["Cust Name"]||"").trim()+"|"+(r["Shipper"]||"").trim();
+    if(!byCenter.has(key)) byCenter.set(key,[]);
+    byCenter.get(key).push(r);
+  });
+
+  for (const [key, list] of byCenter){
+    const [center,cust,carrier] = key.split("|");
+    let idx=0;
+    while(idx<list.length){
+      let date=list[idx].__recommendedShip;
+      let windowPick=null;
       for(const w of blocks){
-        if (getSlotUsage(date, w, "Truckload") < getSlotLimit(w,"Truckload")) { windowPick = w; break; }
+        if(getSlotUsage(date,w,"Truckload")<getSlotLimit(w,"Truckload")){windowPick=w;break;}
       }
-      // if all full, push to next day until a window opens
-      let safety=0;
-      while(!windowPick && safety<14){
-        date = ymd(addDays(new Date(date),1));
-        for(const w of blocks){
-          if (getSlotUsage(date, w, "Truckload") < getSlotLimit(w,"Truckload")) { windowPick = w; break; }
+      if(!windowPick){
+        let d=new Date(date);let tries=0;
+        while(!windowPick && tries<7){d.setDate(d.getDate()+1);date=ymd(d);
+          for(const w of blocks){if(getSlotUsage(date,w,"Truckload")<getSlotLimit(w,"Truckload")){windowPick=w;break;}}
+          tries++;
         }
-        safety++;
+        if(!windowPick) windowPick=blocks[0];
       }
-      if(!windowPick) windowPick = blocks[0];
-
-      // pack orders until capacity reached or carrier/date mismatch
-      const packRows = [];
-      let u=0,c=0;
-      while(idx < list.length){
-        const r = list[idx];
-        const fitsCarrier = (r["Shipper"]||"").trim()===carrier;
-        const targetDate = r.__recommendedShip || date;
-        // prefer same date; if far future and current still has room, we still try to pack if within capacity
-        const willFit = (u + (r.__units||0) <= MAX_UNITS_PER_TRUCK) && (c + (r.__cartons||0) <= MAX_CARTS_PER_TRUCK);
-        if(!fitsCarrier || !willFit) break;
-        // soft guard: don't mix dates too wildly; allow if within +1 day
-        const daysDiff = Math.abs((new Date(targetDate) - new Date(date))/(1000*60*60*24));
-        if(daysDiff>1 && packRows.length>0) break;
-
-        packRows.push(r); u += r.__units||0; c += r.__cartons||0; idx++;
+      const pack=[];let u=0,c=0;
+      while(idx<list.length){
+        const r=list[idx];
+        const fits=(u+(r.__units||0)<=MAX_UNITS_PER_TRUCK)&&(c+(r.__cartons||0)<=MAX_CARTS_PER_TRUCK);
+        if(!fits && pack.length>0) break;
+        pack.push(r);u+=r.__units||0;c+=r.__cartons||0;idx++;
+        if(u>=MAX_UNITS_PER_TRUCK||c>=MAX_CARTS_PER_TRUCK)break;
       }
-      if (!packRows.length){ idx++; continue; }
-
-      const fill = Math.min((c / MAX_CARTS_PER_TRUCK)*100, (u / MAX_UNITS_PER_TRUCK)*100);
+      const fill=Math.min((c/MAX_CARTS_PER_TRUCK)*100,(u/MAX_UNITS_PER_TRUCK)*100);
       proposals.push({
-        id: `AUTO-${nextLoadNum++}`,
-        carrier, date, window: windowPick,
-        rows: packRows, units: u, cartons: c, fill: Math.round(fill)
+        id:`AUTO-${center}-${nextLoadNum++}`,
+        type:"center",
+        center,customer:cust,carrier,
+        date,window:windowPick,
+        rows:pack,units:u,cartons:c,fill:Math.round(fill)
       });
     }
   }
 
+  // --- handle direct-store orders ---
+  direct.forEach(r=>{
+    const isAmazon=String(r["Cust Name"]||"").toLowerCase().includes("amazon");
+    const po=r["PO Num"]||crypto.randomUUID().slice(0,6);
+    const id=`AUTO-STORE-${po}`;
+    const date=r.__recommendedShip;
+    let win=null;
+    for(const w of blocks){if(getSlotUsage(date,w,"Truckload")<getSlotLimit(w,"Truckload")){win=w;break;}}
+    if(!win)win=blocks[0];
+    proposals.push({
+      id,
+      type:"store",
+      store:r["Store"]||"",
+      carrier:r["Shipper"]||"",
+      customer:r["Cust Name"]||"",
+      date,window:win,
+      rows:[r],
+      units:r.__units||0,cartons:r.__cartons||0,fill:Math.round(((r.__cartons||0)/MAX_CARTS_PER_TRUCK)*100),
+      amazon:isAmazon
+    });
+  });
+
   return proposals;
 }
 
+/* --- render proposal modal --- */
 function renderAutoModal(proposals){
-  const tb = document.querySelector("#auto-table tbody");
-  tb.innerHTML = proposals.map((p,i)=>`
-    <tr>
+  const tb=document.querySelector("#auto-table tbody");
+  tb.innerHTML=proposals.map(p=>{
+    const warn=p.type==="center"?"⚠️ Master BOL Needed":p.amazon?"🟡 Amazon Solo":"";
+    return `<tr class="${p.type==='center'?'row-warn':''}">
       <td><input type="checkbox" class="auto-pick" data-id="${p.id}" ${p.fill>=60?"checked":""}></td>
-      <td>${p.id}</td><td>${p.date}</td><td>${p.window}</td><td>${p.carrier||""}</td>
-      <td>${p.rows.length}</td><td>${p.units.toLocaleString()}</td><td>${p.cartons.toLocaleString()}</td><td>${p.fill}%</td>
-    </tr>
-  `).join("");
+      <td>${p.id}</td>
+      <td>${p.date}</td>
+      <td>${p.window}</td>
+      <td>${p.carrier||""}</td>
+      <td>${p.rows.length}</td>
+      <td>${p.units.toLocaleString()}</td>
+      <td>${p.cartons.toLocaleString()}</td>
+      <td>${p.fill}%</td>
+      <td>${warn}</td>
+    </tr>`;
+  }).join("");
 
-  const uTot = proposals.reduce((s,p)=>s+p.units,0);
-  const cTot = proposals.reduce((s,p)=>s+p.cartons,0);
-  $("auto-summary").textContent = `Proposed loads: ${proposals.length} • Total Units ${uTot.toLocaleString()} • Total Cartons ${cTot.toLocaleString()}`;
+  const uTot=proposals.reduce((s,p)=>s+p.units,0);
+  const cTot=proposals.reduce((s,p)=>s+p.cartons,0);
+  $("auto-summary").textContent=`Proposed loads: ${proposals.length} • Total Units ${uTot.toLocaleString()} • Total Cartons ${cTot.toLocaleString()}`;
 
   $("auto-overlay").classList.remove("hidden");
 
-  $("auto-confirm-all").onclick = ()=> confirmAutoProposals(proposals);
-  $("auto-confirm-selected").onclick = ()=>{
-    const ids = [...document.querySelectorAll(".auto-pick:checked")].map(x=>x.dataset.id);
+  $("auto-confirm-all").onclick=()=>confirmAutoProposals(proposals);
+  $("auto-confirm-selected").onclick=()=>{
+    const ids=[...document.querySelectorAll(".auto-pick:checked")].map(x=>x.dataset.id);
     confirmAutoProposals(proposals.filter(p=>ids.includes(p.id)));
   };
 }
 
+/* --- confirm proposals into real loads --- */
 function confirmAutoProposals(proposals){
-  if(!proposals.length){ $("auto-overlay").classList.add("hidden"); return; }
+  if(!proposals.length){$("auto-overlay").classList.add("hidden");return;}
   for(const p of proposals){
-    const base = buildLoadFromRows({ loadId: p.id, rows: p.rows, loadTypeHint:"Truckload" });
-    base.autoGenerated = false;
-    base.pickupDate = p.date;
-    base.pickupWindow = p.window;
-    base.carrier = p.carrier || base.carrier;
+    const base=buildLoadFromRows({loadId:p.id,rows:p.rows,loadTypeHint:"Truckload"});
+    base.autoGenerated=false;
+    base.pickupDate=p.date;
+    base.pickupWindow=p.window;
+    base.carrier=p.carrier||base.carrier;
+    base.customer=p.customer||base.customer;
+    if(p.type==="center"){ base.status="⚠ Master BOL Required"; }
     appState.truckloads.push(base);
   }
   $("auto-overlay").classList.add("hidden");
   saveState(); renderAll();
 }
+
 
 // ========= DOCK RENDER / EDIT =========
 function renderDock(){
