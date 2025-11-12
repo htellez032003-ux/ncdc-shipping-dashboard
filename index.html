@@ -1,241 +1,346 @@
-// script.js  (final with drill-down)
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>NCDC Shipping Dashboard</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <!-- LOGIN -->
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      <h1 class="app-title">NCDC Shipping Dashboard</h1>
+      <p class="app-subtitle">Internal Scheduling &amp; Dock Control</p>
+      <label>Email</label>
+      <input id="login-email" type="email" value="htellez032003@gmail.com" />
+      <label>Password</label>
+      <input id="login-password" type="password" value="Ltapaprel040523" />
+      <button id="login-btn" class="btn primary">Sign In</button>
+      <p id="login-error" class="error hidden">Invalid credentials.</p>
+      <p class="hint">Owner login (current): <strong>htellez032003@gmail.com</strong> / <strong>Ltapaprel040523</strong></p>
+    </div>
+  </div>
 
-// ===== STORAGE KEY =====
-const STORAGE_KEY = "ncdcShippingStateV2";
+  <!-- APP SHELL -->
+  <div id="app-shell" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo-box">N</div>
+        <div>
+          <div class="sidebar-title">NCDC Dashboard</div>
+          <div class="sidebar-sub">Shipping</div>
+        </div>
+      </div>
+      <nav>
+        <button data-tab="orders" class="nav-link active">Orders</button>
+        <button data-tab="dock" class="nav-link">Dock</button>
+        <button data-tab="todays" class="nav-link">Today's Pickups</button>
+        <button data-tab="truckloads" class="nav-link">Truckloads</button>
+        <button data-tab="metrics" class="nav-link">Metrics</button>
+        <button data-tab="history" class="nav-link">History</button>
+        <button data-tab="team" class="nav-link">Team</button>
+        <button data-tab="settings" class="nav-link">Settings</button>
+      </nav>
+      <button id="logout-btn" class="btn secondary small">Logout</button>
+    </aside>
 
-// ===== STATE =====
-const appState = {
-  orders: [],
-  truckloads: [],
-  history: [],
-  team: [
-    { name: "Router 1", role: "router", shift: "1st", active: true },
-    { name: "Dock Lead", role: "dock", shift: "1st", active: true }
-  ],
-  settings: { maxLTL: 4, maxTL: 3, maxFloor: 2 }
-};
+    <main class="main">
+      <!-- === ORDERS TAB === -->
+      <section id="tab-orders" class="tab-panel">
+        <header class="pane-header">
+          <h2>Orders</h2>
+          <p>Upload CSV and manage orders.</p>
+        </header>
 
-// ===== UTILS =====
-function $(id) { return document.getElementById(id); }
+        <div class="orders-toolbar">
+          <div class="upload-box">
+            <label class="label">Upload Orders CSV</label>
+            <input type="file" id="orders-csv" accept=".csv" />
+            <p class="small">Must match latest headers you provided.</p>
+            <p class="csv-updated" id="csv-updated">CSV updated: --</p>
+          </div>
 
-function loadState() {
-  try { Object.assign(appState, JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}")); }
-  catch {}
-}
+          <div class="filters-row">
+            <input id="orders-search" type="text" placeholder="Search PO, BOL, Cust, Shipper..." />
+            <select id="date-column-select">
+              <option value="Start Date">Start Date</option>
+              <option value="Cancel Date">Cancel Date</option>
+              <option value="Pick Proc Date">Pick Proc Date</option>
+              <option value="Route Date">Route Date</option>
+              <option value="Ready Date">Ready Date</option>
+              <option value="Scheduled Date">Scheduled Date</option>
+            </select>
+            <input id="date-from" type="date" />
+            <input id="date-to" type="date" />
+            <button id="apply-date-filter" class="btn tiny">Apply</button>
+            <button id="clear-filters" class="btn tiny secondary">Clear</button>
+          </div>
 
-function saveState() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(appState)); }
-  catch {}
-}
+          <div class="selected-box">
+            <span>Selected POs: <span id="selected-count">0</span></span>
+            <button id="create-truckload-btn" class="btn tiny primary">Create Truckload</button>
+          </div>
+        </div>
 
-function mostCommon(a){const c={};let m="",n=0;for(const v of a){const k=v||"";c[k]=(c[k]||0)+1;if(c[k]>n){n=c[k];m=k}}return m;}
-function sumNumber(r,c){return r.reduce((s,x)=>s+(+((x[c]||"").replace(/,/g,""))||0),0);}
-function earliestDate(a){const d=a.map(x=>x&&new Date(x)).filter(x=>x&&x>0);if(!d.length)return"";d.sort((a,b)=>a-b);return d[0].toISOString().slice(0,10);}
+        <!-- ORDERS LIST -->
+        <div class="orders-grid">
+          <table>
+            <thead>
+              <tr>
+                <th><input type="checkbox" id="select-all-orders" /></th>
+                <th>Division</th>
+                <th>BOL#</th>
+                <th>Master BOL#</th>
+                <th>PO Num</th>
+                <th>Customer</th>
+                <th>Cust Name</th>
+                <th>Shipper</th>
+                <th>TTL QTY</th>
+                <th>TTL Amt</th>
+                <th>Total Weight</th>
+                <th>Total Cubic</th>
+                <th>Est. Cartons</th>
+                <th>Est. Pallet</th>
+                <th>Pick Proc Date</th>
+                <th>Start Date</th>
+                <th>Cancel Date</th>
+                <th>Router</th>
+                <th>Route Date</th>
+                <th>Scheduled Date</th>
+                <th>Ready Date</th>
+                <th>Author#</th>
+                <th>PT STATUS</th>
+                <th>Load ID</th>
+              </tr>
+            </thead>
+            <tbody id="orders-body"></tbody>
+          </table>
+        </div>
 
-// ===== LOGIN (if present) =====
-if ($("login-btn")) {
-  $("login-btn").onclick = () => {
-    const ok = $("login-email").value.trim()==="htellez032003@gmail.com" &&
-               $("login-password").value.trim()==="Ltapaprel040523";
-    if (ok){$("login-error").classList.add("hidden");$("login-screen").classList.add("hidden");$("app-shell").classList.remove("hidden");}
-    else {$("login-error").classList.remove("hidden");}
-  };
-}
-if ($("logout-btn")) $("logout-btn").onclick=()=>{$("app-shell").classList.add("hidden");$("login-screen").classList.remove("hidden");};
+        <div class="calendar-row">
+          <div>
+            <h3>Scheduled Pickups Calendar</h3>
+            <p class="muted">Not affected by filters. Click a day to see time slot availability.</p>
+            <div id="orders-calendar" class="calendar"></div>
+          </div>
+          <div>
+            <h3>Select a date</h3>
+            <div id="calendar-detail" class="calendar-detail">Choose a day.</div>
+          </div>
+        </div>
+      </section>
 
-// ===== NAV =====
-document.querySelectorAll(".nav-link").forEach(b=>b.onclick=()=>{
-  document.querySelectorAll(".nav-link").forEach(x=>x.classList.remove("active"));
-  b.classList.add("active");
-  const t=b.dataset.tab;
-  document.querySelectorAll(".tab-panel").forEach(p=>p.classList.toggle("hidden",p.id!=="tab-"+t));
-});
+      <!-- === DOCK TAB === -->
+      <section id="tab-dock" class="tab-panel hidden">
+        <header class="pane-header">
+          <h2>Dock</h2>
+          <p>Assign staging by truckload.</p>
+        </header>
+        <div class="dock-list">
+          <table>
+            <thead>
+              <tr>
+                <th>Load ID</th>
+                <th>Customer</th>
+                <th>Carrier/Shipper</th>
+                <th>Load Type</th>
+                <th>Pick Up Date</th>
+                <th>Total Cartons</th>
+                <th>Routed Pallet Count</th>
+                <th>Staged Location</th>
+                <th>Assigned To</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="dock-body"></tbody>
+          </table>
+        </div>
+      </section>
 
-// ===== CSV UPLOAD =====
-if ($("orders-csv")) $("orders-csv").addEventListener("change",e=>{
-  const f=e.target.files[0];if(!f)return;
-  const r=new FileReader();
-  r.onload=ev=>{parseCSV(ev.target.result);$("csv-updated").textContent="CSV updated: "+new Date().toLocaleString();};
-  r.readAsText(f);
-});
+      <!-- === TODAY’S PICKUPS TAB === -->
+      <section id="tab-todays" class="tab-panel hidden">
+        <header class="pane-header">
+          <h2>Today's Pickups</h2>
+          <p>Live board for dock tracking arrivals/departures.</p>
+        </header>
+        <div class="today-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Load ID</th>
+                <th>Customer</th>
+                <th>Carrier</th>
+                <th>Load Type</th>
+                <th>Pick Up Time</th>
+                <th>Total Cartons</th>
+                <th>Status</th>
+                <th>Arrived</th>
+                <th>Departed</th>
+              </tr>
+            </thead>
+            <tbody id="today-body"></tbody>
+          </table>
+        </div>
+      </section>
 
-function parseCSV(txt){
-  const lines=txt.split(/\r?\n/).filter(l=>l.trim()!=="");
-  if(!lines.length)return;
-  const h=lines[0].split(",").map(x=>x.trim());
-  const rows=lines.slice(1).map(l=>{
-    const c=l.split(",");
-    const o={};h.forEach((hh,i)=>o[hh]=c[i]?c[i].trim():"");
-    return o;
-  });
-  appState.orders=rows;
-  rebuildTruckloadsFromOrders();
-  renderAll(); saveState();
-}
+      <!-- === TRUCKLOADS TAB === -->
+      <section id="tab-truckloads" class="tab-panel hidden">
+        <header class="pane-header">
+          <h2>Truckloads</h2>
+          <p>Click a load to view Master/BOL/PO breakdown.</p>
+        </header>
+        <div class="truckloads-list">
+          <table>
+            <thead>
+              <tr>
+                <th>Load ID</th>
+                <th>Customer</th>
+                <th>Carrier</th>
+                <th>Load Type</th>
+                <th>Pick Up Date</th>
+                <th>Total Cartons</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="truckloads-body"></tbody>
+          </table>
+        </div>
+      </section>
 
-// ===== GROUPING =====
-function rebuildTruckloadsFromOrders(){
-  const manual=appState.truckloads.filter(t=>!t.autoGenerated);
-  const auto=[];
-  const withAuth=appState.orders.filter(o=>(o["Author#"]||"").trim());
-  const byAuth=new Map();
-  for(const o of withAuth){const a=o["Author#"].trim();if(!byAuth.has(a))byAuth.set(a,[]);byAuth.get(a).push(o);}
-  for(const [a,rows]of byAuth)auto.push(buildLoadFromRows({loadId:a,rows,loadTypeHint:"Truckload"}));
+      <!-- === METRICS TAB === -->
+      <section id="tab-metrics" class="tab-panel hidden">
+        <header class="pane-header">
+          <h2>Metrics</h2>
+          <p>Rolling summary for staging and pickups.</p>
+        </header>
+        <div class="metrics-row">
+          <div class="metric-card">
+            <div class="metric-label">Trucks Today</div>
+            <div class="metric-value" id="m-trucks-today">0</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Total Cartons</div>
+            <div class="metric-value" id="m-cartons">0</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Fully Staged</div>
+            <div class="metric-value" id="m-staged">0</div>
+          </div>
+        </div>
+        <div class="metrics-actions">
+          <button id="metrics-export" class="btn tiny secondary">Export Metrics CSV</button>
+        </div>
+      </section>
 
-  const noAuth=appState.orders.filter(o=>!(o["Author#"]||"").trim());
-  const ltlMap=new Map();
-  for(const o of noAuth){
-    const k=(o["Shipper"]||"").trim()+"||"+(o["Ready Date"]||"").trim();
-    if(!ltlMap.has(k))ltlMap.set(k,[]);
-    ltlMap.get(k).push(o);
-  }
-  for(const [k,rows]of ltlMap)auto.push(buildLoadFromRows({loadId:"LTL-"+k,rows,loadTypeHint:"LTL"}));
-  appState.truckloads=[...manual,...auto];
-}
+      <!-- === HISTORY TAB === -->
+      <section id="tab-history" class="tab-panel hidden">
+        <header class="pane-header">
+          <h2>History</h2>
+          <p>Departed truckloads archive.</p>
+        </header>
+        <table>
+          <thead>
+            <tr>
+              <th>Load ID</th>
+              <th>Customer</th>
+              <th>Carrier</th>
+              <th>Pick Up Date</th>
+              <th>BOL / Master BOL</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="history-body"></tbody>
+        </table>
+      </section>
 
-function buildLoadFromRows({loadId,rows,loadTypeHint}){
-  const customer=mostCommon(rows.map(r=>r["Cust Name"]||""));
-  const carrier=mostCommon(rows.map(r=>r["Shipper"]||""));
-  const pickupDate=earliestDate(rows.map(r=>r["Ready Date"]||""));
-  const bolCommon=mostCommon(rows.map(r=>r["BOL#"]||""));
-  const cartons=sumNumber(rows,"Est. Cartons");
-  const pallets=sumNumber(rows,"Est. Pallet");
-  const weight=sumNumber(rows,"Total Weight");
-  const cube=sumNumber(rows,"Total Cubic");
-  const masterGroups=buildMasterGroups(rows);
-  return{loadId,autoGenerated:true,loadType:loadTypeHint||"Truckload",customer,carrier,pickupDate,bol:bolCommon,
-    cartons,pallets,weight,cube,stagedLocation:"",assignedTo:"",status:"Unstaged",masterGroups,departed:false};
-}
+      <!-- === TEAM TAB === -->
+      <section id="tab-team" class="tab-panel hidden">
+        <header class="pane-header">
+          <h2>Team</h2>
+          <p>Admin/owner only – manage shift and roles.</p>
+        </header>
+        <div class="team-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Role</th>
+                <th>Shift</th>
+                <th>Active</th>
+              </tr>
+            </thead>
+            <tbody id="team-body"></tbody>
+          </table>
+        </div>
+      </section>
 
-function buildMasterGroups(rows){
-  const byM=new Map();
-  for(const r of rows){const m=(r["Master BOL#"]||"").trim();if(!byM.has(m))byM.set(m,[]);byM.get(m).push(r);}
-  const res=[];
-  for(const [m,rs]of byM){
-    const byB=new Map();
-    for(const r of rs){const b=(r["BOL#"]||"").trim();if(!byB.has(b))byB.set(b,[]);byB.get(b).push(r);}
-    const bols=[];
-    for(const [b,bs]of byB){
-      bols.push({bol:b,pos:bs.map(x=>({po:x["PO Num"],customer:x["Cust Name"],cartons:+(x["Est. Cartons"]||0),pallets:+(x["Est. Pallet"]||0)}))});
-    }
-    res.push({masterBol:m,bols});
-  }
-  return res;
-}
+      <!-- === SETTINGS TAB === -->
+      <section id="tab-settings" class="tab-panel hidden">
+        <header class="pane-header">
+          <h2>Settings</h2>
+          <p>Admin controlled values.</p>
+        </header>
+        <div class="settings-group">
+          <label for="max-ltl">Max LTL per time block</label>
+          <input id="max-ltl" type="number" min="0" value="4" />
+        </div>
+        <div class="settings-group">
+          <label for="max-tl">Max Truckload per time block</label>
+          <input id="max-tl" type="number" min="0" value="3" />
+        </div>
+        <div class="settings-group">
+          <label for="max-floor">Max Floorload per time block</label>
+          <input id="max-floor" type="number" min="0" value="2" />
+        </div>
+      </section>
+    </main>
+  </div>
 
-// ===== ORDERS =====
-let filteredOrders=[];const selectedPOs=new Set();
-function renderOrders(){
-  const tb=$("orders-body");if(!tb)return;
-  if(!filteredOrders.length)filteredOrders=[...appState.orders];
-  tb.innerHTML="";
-  for(const o of filteredOrders){
-    const po=o["PO Num"]||"";
-    tb.insertAdjacentHTML("beforeend",`
-      <tr>
-        <td><input type="checkbox" class="po-check" data-po="${po}" ${selectedPOs.has(po)?"checked":""}></td>
-        <td>${o["Division"]||""}</td><td>${o["BOL#"]||""}</td><td>${o["Master BOL#"]||""}</td>
-        <td>${po}</td><td>${o["Customer"]||""}</td><td>${o["Cust Name"]||""}</td><td>${o["Shipper"]||""}</td>
-        <td>${o["TTL QTY"]||""}</td><td>${o["TTL Amt"]||""}</td><td>${o["Total Weight"]||""}</td>
-        <td>${o["Total Cubic"]||""}</td><td>${o["Est. Cartons"]||""}</td><td>${o["Est. Pallet"]||""}</td>
-        <td>${o["Pick Proc Date"]||""}</td><td>${o["Start Date"]||""}</td><td>${o["Cancel Date"]||""}</td>
-        <td>${o["Router"]||""}</td><td>${o["Route Date"]||""}</td><td>${o["Scheduled Date"]||""}</td>
-        <td>${o["Ready Date"]||""}</td><td>${o["Author#"]||""}</td><td>${o["PT STATUS"]||""}</td><td></td>
-      </tr>`);
-  }
-  document.querySelectorAll(".po-check").forEach(ch=>ch.onchange=e=>{
-    const p=e.target.dataset.po;if(e.target.checked)selectedPOs.add(p);else selectedPOs.delete(p);
-    $("selected-count").textContent=selectedPOs.size;
-  });
-}
+  <!-- === TRUCKLOAD CREATION MODAL === -->
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div class="modal">
+      <h3>Create Truckload</h3>
+      <p id="modal-selected-pos"></p>
+      <label>Load ID</label>
+      <input id="tl-load-id" type="text" />
+      <label>Load Type</label>
+      <select id="tl-load-type">
+        <option value="LTL">LTL</option>
+        <option value="Truckload">Truckload</option>
+        <option value="Floorload">Floorload</option>
+      </select>
+      <label>Pick Up Date</label>
+      <input id="tl-pickup-date" type="date" />
+      <label>Carrier/Shipper</label>
+      <input id="tl-carrier" type="text" />
+      <label>Customer Name</label>
+      <input id="tl-customer" type="text" />
+      <label>BOL / Master BOL</label>
+      <input id="tl-bol" type="text" />
+      <label>Total Cartons</label>
+      <input id="tl-cartons" type="number" min="0" />
+      <label>Routed Pallet Count</label>
+      <input id="tl-pallets" type="number" min="0" />
+      <div class="modal-actions">
+        <button id="tl-save" class="btn primary tiny">Save</button>
+        <button id="tl-cancel" class="btn secondary tiny">Cancel</button>
+      </div>
+    </div>
+  </div>
 
-// ===== CALENDAR dummy =====
-if ($("orders-calendar")){for(let i=1;i<=30;i++){const b=document.createElement("button");b.textContent=i;$("orders-calendar").appendChild(b);}}
+  <!-- === TRUCKLOAD DETAIL / DRILL-DOWN MODAL === -->
+  <div id="tl-detail-overlay" class="modal-overlay hidden">
+    <div class="modal">
+      <h3 id="tl-detail-title">Truckload Detail</h3>
+      <div id="tl-detail-body" style="font-size:0.8rem;"></div>
+      <div class="modal-actions">
+        <button onclick="document.getElementById('tl-detail-overlay').classList.add('hidden')" class="btn secondary tiny">Close</button>
+      </div>
+    </div>
+  </div>
 
-// ===== MANUAL LOAD MODAL =====
-if ($("create-truckload-btn")) $("create-truckload-btn").onclick=()=>{
-  if(!selectedPOs.size)return alert("Select at least one PO.");
-  $("modal-selected-pos").textContent="POs: "+[...selectedPOs].join(", ");
-  $("modal-overlay").classList.remove("hidden");
-};
-if ($("tl-cancel")) $("tl-cancel").onclick=()=>$("modal-overlay").classList.add("hidden");
-if ($("tl-save")) $("tl-save").onclick=()=>{
-  const id=$("tl-load-id").value.trim()||"LOAD-"+(appState.truckloads.length+1);
-  appState.truckloads.push({loadId:id,autoGenerated:false,loadType:$("tl-load-type").value,
-    pickupDate:$("tl-pickup-date").value,carrier:$("tl-carrier").value,customer:$("tl-customer").value,
-    bol:$("tl-bol").value,cartons:+$("tl-cartons").value||0,pallets:+$("tl-pallets").value||0,
-    weight:0,cube:0,status:"Unstaged",assignedTo:"",stagedLocation:"",masterGroups:[],departed:false});
-  $("modal-overlay").classList.add("hidden");renderAll();saveState();
-};
-
-// ===== DOCK / TODAY / HISTORY / METRICS short renders =====
-function renderDock(){
-  const b=$("dock-body");if(!b)return;b.innerHTML="";
-  for(const t of appState.truckloads){
-    b.insertAdjacentHTML("beforeend",`
-      <tr><td>${t.loadId}</td><td>${t.customer||""}</td><td>${t.carrier||""}</td>
-      <td>${t.loadType||""}</td><td>${t.pickupDate||""}</td><td>${t.cartons||0}</td><td>${t.pallets||0}</td>
-      <td>${t.stagedLocation||""}</td><td>${t.assignedTo||""}</td><td>${t.status||""}</td>
-      <td><button class="btn tiny" data-assign="${t.loadId}">Assign</button>
-      <button class="btn tiny secondary" data-stage="${t.loadId}">Fully Staged</button></td></tr>`);
-  }
-  document.querySelectorAll("[data-assign]").forEach(b=>b.onclick=()=>{
-    const id=b.dataset.assign;const t=appState.truckloads.find(x=>x.loadId===id);
-    if(!t)return;const who=prompt("Assign to who?");t.assignedTo=who||"";t.status="Being staged";renderAll();saveState();
-  });
-  document.querySelectorAll("[data-stage]").forEach(b=>b.onclick=()=>{
-    const id=b.dataset.stage;const t=appState.truckloads.find(x=>x.loadId===id);
-    if(!t)return;t.status="Fully staged";renderAll();saveState();
-  });
-}
-function renderTodays(){const b=$("today-body");if(!b)return;b.innerHTML="";
-  for(const t of appState.truckloads){
-    b.insertAdjacentHTML("beforeend",`<tr><td>${t.loadId}</td><td>${t.customer||""}</td><td>${t.carrier||""}</td>
-      <td>${t.loadType||""}</td><td>${t.pickupDate||""}</td><td>${t.cartons||0}</td><td>${t.status||""}</td>
-      <td><button class="btn tiny" data-arrived="${t.loadId}">Arrived</button></td>
-      <td><button class="btn tiny secondary" data-departed="${t.loadId}">Departed</button></td></tr>`);
-  }
-  document.querySelectorAll("[data-arrived]").forEach(b=>b.onclick=()=>{
-    const t=appState.truckloads.find(x=>x.loadId===b.dataset.arrived);if(t){t.status="At door";renderAll();saveState();}});
-  document.querySelectorAll("[data-departed]").forEach(b=>b.onclick=()=>{
-    const t=appState.truckloads.find(x=>x.loadId===b.dataset.departed);
-    if(t){t.status="Departed";appState.history.push({loadId:t.loadId,customer:t.customer,carrier:t.carrier,pickupDate:t.pickupDate,bol:t.bol,status:"Departed"});renderAll();saveState();}});
-}
-function renderHistory(){const b=$("history-body");if(!b)return;b.innerHTML="";
-  for(const h of appState.history)b.insertAdjacentHTML("beforeend",`<tr><td>${h.loadId}</td><td>${h.customer||""}</td><td>${h.carrier||""}</td><td>${h.pickupDate||""}</td><td>${h.bol||""}</td><td>${h.status}</td></tr>`);
-}
-function renderMetrics(){
-  if($("m-trucks-today"))$("m-trucks-today").textContent=appState.truckloads.length;
-  if($("m-cartons"))$("m-cartons").textContent=appState.truckloads.reduce((s,t)=>s+(t.cartons||0),0);
-  if($("m-staged"))$("m-staged").textContent=appState.truckloads.filter(t=>t.status==="Fully staged").length;
-}
-
-// ===== TRUCKLOADS + DRILL-DOWN =====
-function renderTruckloads(){
-  const b=$("truckloads-body");if(!b)return;b.innerHTML="";
-  for(const t of appState.truckloads){
-    b.insertAdjacentHTML("beforeend",`<tr class="tl-row" data-id="${t.loadId}">
-      <td>${t.loadId}</td><td>${t.customer||""}</td><td>${t.carrier||""}</td>
-      <td>${t.loadType||""}</td><td>${t.pickupDate||""}</td><td>${t.cartons||0}</td><td>${t.status||""}</td></tr>`);
-  }
-  // drill-down wiring
-  document.querySelectorAll(".tl-row").forEach(row=>row.onclick=()=>{
-    const id=row.dataset.id;
-    const load=appState.truckloads.find(t=>t.loadId===id);
-    if(!load)return;
-    const b=document.getElementById("tl-detail-body");
-    b.innerHTML=load.masterGroups.map(m=>
-      `<div><strong>Master BOL:</strong> ${m.masterBol||"(none)"}<ul>`+
-      m.bols.map(bl=>`<li><strong>${bl.bol||"(no BOL)"}:</strong> ${bl.pos.map(p=>p.po).join(", ")}</li>`).join("")+
-      `</ul></div>`
-    ).join("");
-    document.getElementById("tl-detail-title").textContent=`${load.loadId} — ${load.customer||""}`;
-    document.getElementById("tl-detail-overlay").classList.remove("hidden");
-  });
-}
-
-// ===== RENDER ALL =====
-function renderAll(){renderOrders();renderTruckloads();renderDock();renderTodays();renderHistory();renderMetrics();}
-
-// ===== INIT =====
-loadState();renderAll();
+  <script src="./script.js"></script>
+</body>
+</html>
