@@ -1,241 +1,655 @@
-// script.js  (final with drill-down)
+// script.js — NCDC Dashboard (full, updated)
 
-// ===== STORAGE KEY =====
-const STORAGE_KEY = "ncdcShippingStateV2";
+// ========= STORAGE =========
+const STORAGE_KEY = "ncdcShippingStateV3";
 
-// ===== STATE =====
+// ========= STATE =========
 const appState = {
   orders: [],
   truckloads: [],
   history: [],
   team: [
-    { name: "Router 1", role: "router", shift: "1st", active: true },
-    { name: "Dock Lead", role: "dock", shift: "1st", active: true }
+    { id: crypto.randomUUID(), name: "Router 1", email: "router@example.com", role: "router", shift: "1st", active: true, theme: "light", lang: "en" },
+    { id: crypto.randomUUID(), name: "Dock Lead", email: "dock@example.com", role: "dock", shift: "1st", active: true, theme: "light", lang: "en" }
   ],
-  settings: { maxLTL: 4, maxTL: 3, maxFloor: 2 }
+  settings: {
+    maxLTL: 4, maxTL: 3, maxFloor: 2,
+    blocks: [
+      { window: "08:00am-10:00am", max: { LTL: 4, Truckload: 2, Floorload: 1 } },
+      { window: "10:00am-12:00pm", max: { LTL: 4, Truckload: 2, Floorload: 1 } },
+      { window: "01:00pm-03:00pm", max: { LTL: 4, Truckload: 3, Floorload: 2 } },
+      { window: "03:00pm-05:00pm", max: { LTL: 4, Truckload: 3, Floorload: 2 } }
+    ],
+    lastHistorySweepYMD: "" // for midnight archival
+  }
 };
 
-// ===== UTILS =====
-function $(id) { return document.getElementById(id); }
-
-function loadState() {
-  try { Object.assign(appState, JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}")); }
-  catch {}
-}
-
-function saveState() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(appState)); }
-  catch {}
-}
-
+// ========= UTILS =========
+const $ = id => document.getElementById(id);
+const todayYMD = () => new Date().toISOString().slice(0,10);
+function loadState(){ try{ Object.assign(appState, JSON.parse(localStorage.getItem(STORAGE_KEY)||"{}")); }catch{} }
+function saveState(){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(appState)); }catch{} }
 function mostCommon(a){const c={};let m="",n=0;for(const v of a){const k=v||"";c[k]=(c[k]||0)+1;if(c[k]>n){n=c[k];m=k}}return m;}
-function sumNumber(r,c){return r.reduce((s,x)=>s+(+((x[c]||"").replace(/,/g,""))||0),0);}
+function sumNumber(rows, col){return rows.reduce((s,x)=>s+(+((x[col]||"").replace(/,/g,""))||0),0);}
 function earliestDate(a){const d=a.map(x=>x&&new Date(x)).filter(x=>x&&x>0);if(!d.length)return"";d.sort((a,b)=>a-b);return d[0].toISOString().slice(0,10);}
+function sameDate(a,b){const x=new Date(a),y=new Date(b);x.setHours(0,0,0,0);y.setHours(0,0,0,0);return x.getTime()===y.getTime();}
+function ymd(d){return new Date(d).toISOString().slice(0,10);}
 
-// ===== LOGIN (if present) =====
-if ($("login-btn")) {
-  $("login-btn").onclick = () => {
-    const ok = $("login-email").value.trim()==="htellez032003@gmail.com" &&
-               $("login-password").value.trim()==="Ltapaprel040523";
-    if (ok){$("login-error").classList.add("hidden");$("login-screen").classList.add("hidden");$("app-shell").classList.remove("hidden");}
-    else {$("login-error").classList.remove("hidden");}
-  };
-}
-if ($("logout-btn")) $("logout-btn").onclick=()=>{$("app-shell").classList.add("hidden");$("login-screen").classList.remove("hidden");};
+// ========= LOGIN / NAV =========
+if ($("login-btn")) $("login-btn").onclick = () => {
+  const ok = $("login-email").value.trim()==="htellez032003@gmail.com" &&
+             $("login-password").value.trim()==="Ltapaprel040523";
+  if (ok){$("login-error").classList.add("hidden");$("login-screen").classList.add("hidden");$("app-shell").classList.remove("hidden");}
+  else {$("login-error").classList.remove("hidden");}
+};
+if ($("logout-btn")) $("logout-btn").onclick = () => { $("app-shell").classList.add("hidden"); $("login-screen").classList.remove("hidden"); };
 
-// ===== NAV =====
-document.querySelectorAll(".nav-link").forEach(b=>b.onclick=()=>{
-  document.querySelectorAll(".nav-link").forEach(x=>x.classList.remove("active"));
+document.querySelectorAll(".nav-link").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".nav-link").forEach(x => x.classList.remove("active"));
   b.classList.add("active");
-  const t=b.dataset.tab;
-  document.querySelectorAll(".tab-panel").forEach(p=>p.classList.toggle("hidden",p.id!=="tab-"+t));
+  const tab = b.dataset.tab;
+  document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("hidden", p.id !== "tab-"+tab));
+  if (tab==="calendar") renderCalendar();
 });
 
-// ===== CSV UPLOAD =====
-if ($("orders-csv")) $("orders-csv").addEventListener("change",e=>{
-  const f=e.target.files[0];if(!f)return;
-  const r=new FileReader();
-  r.onload=ev=>{parseCSV(ev.target.result);$("csv-updated").textContent="CSV updated: "+new Date().toLocaleString();};
+// ========= CSV UPLOAD (robust parser) =========
+if ($("orders-csv")) $("orders-csv").addEventListener("change", e => {
+  const f = e.target.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = ev => {
+    const text = ev.target.result;
+    appState.orders = parseCSVRobust(text);
+    buildTruckloadsFromOrders();
+    hydrateFilterColumnDropdown();
+    $("csv-updated").textContent = "CSV updated: " + new Date().toLocaleString();
+    renderAll(); saveState();
+  };
   r.readAsText(f);
 });
 
-function parseCSV(txt){
-  const lines=txt.split(/\r?\n/).filter(l=>l.trim()!=="");
-  if(!lines.length)return;
-  const h=lines[0].split(",").map(x=>x.trim());
-  const rows=lines.slice(1).map(l=>{
-    const c=l.split(",");
-    const o={};h.forEach((hh,i)=>o[hh]=c[i]?c[i].trim():"");
-    return o;
-  });
-  appState.orders=rows;
-  rebuildTruckloadsFromOrders();
-  renderAll(); saveState();
-}
-
-// ===== GROUPING =====
-function rebuildTruckloadsFromOrders(){
-  const manual=appState.truckloads.filter(t=>!t.autoGenerated);
-  const auto=[];
-  const withAuth=appState.orders.filter(o=>(o["Author#"]||"").trim());
-  const byAuth=new Map();
-  for(const o of withAuth){const a=o["Author#"].trim();if(!byAuth.has(a))byAuth.set(a,[]);byAuth.get(a).push(o);}
-  for(const [a,rows]of byAuth)auto.push(buildLoadFromRows({loadId:a,rows,loadTypeHint:"Truckload"}));
-
-  const noAuth=appState.orders.filter(o=>!(o["Author#"]||"").trim());
-  const ltlMap=new Map();
-  for(const o of noAuth){
-    const k=(o["Shipper"]||"").trim()+"||"+(o["Ready Date"]||"").trim();
-    if(!ltlMap.has(k))ltlMap.set(k,[]);
-    ltlMap.get(k).push(o);
+// RFC4180-ish simple robust CSV
+function parseCSVRobust(text){
+  const rows=[]; let row=[], val="", q=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    if(ch==='\"'){ if(q && text[i+1]==='\"'){ val+='\"'; i++; } else { q=!q; } }
+    else if(ch===',' && !q){ row.push(val); val=""; }
+    else if((ch==='\n'||ch==='\r') && !q){
+      if(val.length||row.length){ row.push(val); rows.push(row); row=[]; val=""; }
+      if(ch==='\r' && text[i+1]==='\n') i++;
+    }
+    else val+=ch;
   }
-  for(const [k,rows]of ltlMap)auto.push(buildLoadFromRows({loadId:"LTL-"+k,rows,loadTypeHint:"LTL"}));
-  appState.truckloads=[...manual,...auto];
+  if(val.length||row.length){ row.push(val); rows.push(row); }
+  const header = rows.shift().map(h=>h.trim());
+  return rows.filter(r=>r.some(c=>String(c).trim()!=="")).map(r=>{
+    const o={}; header.forEach((h,i)=>o[h]= (r[i]??"").trim()); return o;
+  });
 }
 
-function buildLoadFromRows({loadId,rows,loadTypeHint}){
-  const customer=mostCommon(rows.map(r=>r["Cust Name"]||""));
-  const carrier=mostCommon(rows.map(r=>r["Shipper"]||""));
-  const pickupDate=earliestDate(rows.map(r=>r["Ready Date"]||""));
-  const bolCommon=mostCommon(rows.map(r=>r["BOL#"]||""));
-  const cartons=sumNumber(rows,"Est. Cartons");
-  const pallets=sumNumber(rows,"Est. Pallet");
-  const weight=sumNumber(rows,"Total Weight");
-  const cube=sumNumber(rows,"Total Cubic");
-  const masterGroups=buildMasterGroups(rows);
-  return{loadId,autoGenerated:true,loadType:loadTypeHint||"Truckload",customer,carrier,pickupDate,bol:bolCommon,
-    cartons,pallets,weight,cube,stagedLocation:"",assignedTo:"",status:"Unstaged",masterGroups,departed:false};
+// ========= GROUPING / BUILD LOADS =========
+function buildTruckloadsFromOrders(){
+  const manual = appState.truckloads.filter(t=>!t.autoGenerated);
+  const auto = [];
+
+  const withAuth = appState.orders.filter(o => (o["Author#"]||"").trim());
+  const byAuth = new Map();
+  withAuth.forEach(o => {
+    const k = o["Author#"].trim();
+    if(!byAuth.has(k)) byAuth.set(k, []);
+    byAuth.get(k).push(o);
+  });
+  for(const [loadId, rows] of byAuth){
+    auto.push(buildLoadFromRows({ loadId, rows, loadTypeHint: "Truckload" }));
+  }
+
+  const noAuth = appState.orders.filter(o => !(o["Author#"]||"").trim());
+  const byLTL = new Map();
+  noAuth.forEach(o=>{
+    const k = (o["Shipper"]||"").trim()+"||"+(o["Ready Date"]||"").trim();
+    if(!byLTL.has(k)) byLTL.set(k,[]);
+    byLTL.get(k).push(o);
+  });
+  for(const [k, rows] of byLTL){
+    auto.push(buildLoadFromRows({ loadId: "LTL-"+k, rows, loadTypeHint: "LTL" }));
+  }
+
+  appState.truckloads = [...manual, ...auto];
+}
+
+function buildLoadFromRows({loadId, rows, loadTypeHint}){
+  const customer = mostCommon(rows.map(r=>r["Cust Name"]||""));
+  const carrier = mostCommon(rows.map(r=>r["Shipper"]||""));
+  const pickupDate = earliestDate(rows.map(r=>r["Ready Date"]||""));
+  const bolCommon = mostCommon(rows.map(r=>r["BOL#"]||""));
+  const cartons = sumNumber(rows, "Est. Cartons");
+  const pallets = sumNumber(rows, "Est. Pallet");
+  const weight = sumNumber(rows, "Total Weight");
+  const cube = sumNumber(rows, "Total Cubic");
+  const masterGroups = buildMasterGroups(rows);
+
+  return {
+    loadId, autoGenerated: true,
+    loadType: loadTypeHint || "Truckload",
+    customer, carrier,
+    pickupDate, pickupWindow: "", // editable internally
+    bol: bolCommon, cartons, pallets, weight, cube,
+    stagedLocation: "", assignedTo: [], actualPallets: 0, loadedBy: [],
+    status: "Unstaged", departed: false, masterGroups
+  };
 }
 
 function buildMasterGroups(rows){
-  const byM=new Map();
-  for(const r of rows){const m=(r["Master BOL#"]||"").trim();if(!byM.has(m))byM.set(m,[]);byM.get(m).push(r);}
-  const res=[];
-  for(const [m,rs]of byM){
-    const byB=new Map();
-    for(const r of rs){const b=(r["BOL#"]||"").trim();if(!byB.has(b))byB.set(b,[]);byB.get(b).push(r);}
-    const bols=[];
-    for(const [b,bs]of byB){
-      bols.push({bol:b,pos:bs.map(x=>({po:x["PO Num"],customer:x["Cust Name"],cartons:+(x["Est. Cartons"]||0),pallets:+(x["Est. Pallet"]||0)}))});
-    }
-    res.push({masterBol:m,bols});
-  }
-  return res;
-}
-
-// ===== ORDERS =====
-let filteredOrders=[];const selectedPOs=new Set();
-function renderOrders(){
-  const tb=$("orders-body");if(!tb)return;
-  if(!filteredOrders.length)filteredOrders=[...appState.orders];
-  tb.innerHTML="";
-  for(const o of filteredOrders){
-    const po=o["PO Num"]||"";
-    tb.insertAdjacentHTML("beforeend",`
-      <tr>
-        <td><input type="checkbox" class="po-check" data-po="${po}" ${selectedPOs.has(po)?"checked":""}></td>
-        <td>${o["Division"]||""}</td><td>${o["BOL#"]||""}</td><td>${o["Master BOL#"]||""}</td>
-        <td>${po}</td><td>${o["Customer"]||""}</td><td>${o["Cust Name"]||""}</td><td>${o["Shipper"]||""}</td>
-        <td>${o["TTL QTY"]||""}</td><td>${o["TTL Amt"]||""}</td><td>${o["Total Weight"]||""}</td>
-        <td>${o["Total Cubic"]||""}</td><td>${o["Est. Cartons"]||""}</td><td>${o["Est. Pallet"]||""}</td>
-        <td>${o["Pick Proc Date"]||""}</td><td>${o["Start Date"]||""}</td><td>${o["Cancel Date"]||""}</td>
-        <td>${o["Router"]||""}</td><td>${o["Route Date"]||""}</td><td>${o["Scheduled Date"]||""}</td>
-        <td>${o["Ready Date"]||""}</td><td>${o["Author#"]||""}</td><td>${o["PT STATUS"]||""}</td><td></td>
-      </tr>`);
-  }
-  document.querySelectorAll(".po-check").forEach(ch=>ch.onchange=e=>{
-    const p=e.target.dataset.po;if(e.target.checked)selectedPOs.add(p);else selectedPOs.delete(p);
-    $("selected-count").textContent=selectedPOs.size;
+  const byM = new Map();
+  rows.forEach(r=>{
+    const m = (r["Master BOL#"]||"").trim();
+    if(!byM.has(m)) byM.set(m,[]);
+    byM.get(m).push(r);
   });
+  const groups=[];
+  for(const [m, rs] of byM){
+    const byB = new Map();
+    rs.forEach(r=>{
+      const b = (r["BOL#"]||"").trim();
+      if(!byB.has(b)) byB.set(b,[]);
+      byB.get(b).push(r);
+    });
+    const bols=[];
+    for(const [b, bs] of byB){
+      bols.push({
+        bol: b,
+        pos: bs.map(x=>({ po: x["PO Num"], customer: x["Cust Name"], cartons: +(x["Est. Cartons"]||0), pallets: +(x["Est. Pallet"]||0) }))
+      });
+    }
+    groups.push({ masterBol: m, bols });
+  }
+  return groups;
 }
 
-// ===== CALENDAR dummy =====
-if ($("orders-calendar")){for(let i=1;i<=30;i++){const b=document.createElement("button");b.textContent=i;$("orders-calendar").appendChild(b);}}
+// ========= FILTER UI (Orders) =========
+const dynamicFilters = []; // {col, value}
+function hydrateFilterColumnDropdown(){
+  const sel = $("orders-col-filter");
+  if(!sel) return;
+  const headers = Array.from(document.querySelectorAll("#orders-head th")).map(th=>th.textContent.trim()).slice(1);
+  sel.innerHTML = headers.map(h=>`<option value="${h}">${h}</option>`).join("");
+}
+if ($("add-col-filter")) $("add-col-filter").onclick = () => {
+  const col = $("orders-col-filter").value;
+  const val = $("orders-col-value").value.trim();
+  if(!col || !val) return;
+  dynamicFilters.push({col, value: val});
+  $("orders-col-value").value="";
+  renderActiveFilters(); renderOrders();
+};
+if ($("clear-filters")) $("clear-filters").onclick = () => { dynamicFilters.length=0; $("orders-search").value=""; renderActiveFilters(); renderOrders(true); };
+function renderActiveFilters(){
+  const box = $("active-filters"); if(!box) return;
+  box.innerHTML = dynamicFilters.map((f,i)=>`<span class="chip">${f.col} = "${f.value}" <button data-del="${i}" class="chip-x">×</button></span>`).join("");
+  box.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{ dynamicFilters.splice(+b.dataset.del,1); renderActiveFilters(); renderOrders(); });
+}
 
-// ===== MANUAL LOAD MODAL =====
-if ($("create-truckload-btn")) $("create-truckload-btn").onclick=()=>{
-  if(!selectedPOs.size)return alert("Select at least one PO.");
-  $("modal-selected-pos").textContent="POs: "+[...selectedPOs].join(", ");
+// ========= ORDERS RENDER =========
+let filteredOrders = [];
+const selectedPOs = new Set();
+
+function renderOrders(reset=false){
+  if(reset) filteredOrders = appState.orders.slice();
+  const tb = $("orders-body"); if(!tb) return;
+  const q = ($("orders-search")?.value||"").toLowerCase();
+
+  filteredOrders = appState.orders.filter(o=>{
+    const quick = Object.values(o).some(v => String(v||"").toLowerCase().includes(q));
+    if(!quick) return false;
+    for(const f of dynamicFilters){
+      if(String(o[f.col]||"") !== f.value) return false;
+    }
+    return true;
+  });
+
+  tb.innerHTML="";
+  filteredOrders.forEach(o=>{
+    const po = o["PO Num"]||"";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><input type="checkbox" class="po-check" data-po="${po}" ${selectedPOs.has(po)?"checked":""}></td>
+      <td>${o["Division"]||""}</td><td>${o["BOL#"]||""}</td><td>${o["Master BOL#"]||""}</td>
+      <td>${po}</td><td>${o["Customer"]||""}</td><td>${o["Cust Name"]||""}</td><td>${o["Shipper"]||""}</td>
+      <td>${o["TTL QTY"]||""}</td><td>${o["TTL Amt"]||""}</td>
+      <td>${o["Total Weight"]||""}</td><td>${o["Total Cubic"]||""}</td>
+      <td>${o["Est. Cartons"]||""}</td><td>${o["Est. Pallet"]||""}</td>
+      <td>${o["Pick Proc Date"]||""}</td><td>${o["Start Date"]||""}</td><td>${o["Cancel Date"]||""}</td>
+      <td>${o["Router"]||""}</td><td>${o["Route Date"]||""}</td><td>${o["Scheduled Date"]||""}</td>
+      <td>${o["Ready Date"]||""}</td><td>${o["Author#"]||""}</td><td>${o["PT STATUS"]||""}</td><td></td>
+    `;
+    tb.appendChild(tr);
+  });
+
+  document.querySelectorAll(".po-check").forEach(chk=>{
+    chk.onchange = e => {
+      const po = e.target.dataset.po;
+      if(e.target.checked) selectedPOs.add(po); else selectedPOs.delete(po);
+      $("selected-count").textContent = selectedPOs.size;
+    };
+  });
+  $("selected-count").textContent = selectedPOs.size;
+
+  // refresh assign-existing-load dropdown
+  const sel = $("assign-existing-load");
+  if (sel){
+    sel.innerHTML = `<option value="">Assign to existing load...</option>` +
+      appState.truckloads.map(t=>`<option value="${t.loadId}">${t.loadId} — ${t.customer||""}</option>`).join("");
+  }
+}
+if ($("orders-search")) $("orders-search").oninput = () => renderOrders();
+
+// select-all
+if ($("select-all-orders")) $("select-all-orders").onchange = e => {
+  const checked = e.target.checked;
+  document.querySelectorAll("#orders-body .po-check").forEach(chk=>{
+    chk.checked = checked;
+    const po = chk.dataset.po;
+    if (checked) selectedPOs.add(po); else selectedPOs.delete(po);
+  });
+  $("selected-count").textContent = selectedPOs.size;
+};
+
+// assign selected POs to an existing load
+if ($("assign-pos-to-load")) $("assign-pos-to-load").onclick = () => {
+  const id = $("assign-existing-load").value; if(!id || selectedPOs.size===0) return;
+  const t = appState.truckloads.find(x=>x.loadId===id); if(!t) return;
+  const rows = appState.orders.filter(o => selectedPOs.has(o["PO Num"]||""));
+  const merged = buildMasterGroups(rows);
+  // push POs into existing groups
+  merged.forEach(m=>{
+    let mg = t.masterGroups.find(x=>x.masterBol===m.masterBol);
+    if(!mg){ t.masterGroups.push(m); }
+    else {
+      m.bols.forEach(nb=>{
+        let b = mg.bols.find(x=>x.bol===nb.bol);
+        if(!b) mg.bols.push(nb);
+        else b.pos = [...b.pos, ...nb.pos];
+      });
+    }
+  });
+  // recompute totals
+  t.cartons += sumNumber(rows,"Est. Cartons");
+  t.pallets += sumNumber(rows,"Est. Pallet");
+  t.weight  += sumNumber(rows,"Total Weight");
+  t.cube    += sumNumber(rows,"Total Cubic");
+  renderAll(); saveState();
+};
+
+// create truckload modal
+if ($("create-truckload-btn")) $("create-truckload-btn").onclick = () => {
+  if (!selectedPOs.size){ alert("Select at least one PO."); return; }
+  $("modal-selected-pos").textContent = "POs: " + [...selectedPOs].join(", ");
   $("modal-overlay").classList.remove("hidden");
 };
-if ($("tl-cancel")) $("tl-cancel").onclick=()=>$("modal-overlay").classList.add("hidden");
-if ($("tl-save")) $("tl-save").onclick=()=>{
-  const id=$("tl-load-id").value.trim()||"LOAD-"+(appState.truckloads.length+1);
-  appState.truckloads.push({loadId:id,autoGenerated:false,loadType:$("tl-load-type").value,
-    pickupDate:$("tl-pickup-date").value,carrier:$("tl-carrier").value,customer:$("tl-customer").value,
-    bol:$("tl-bol").value,cartons:+$("tl-cartons").value||0,pallets:+$("tl-pallets").value||0,
-    weight:0,cube:0,status:"Unstaged",assignedTo:"",stagedLocation:"",masterGroups:[],departed:false});
-  $("modal-overlay").classList.add("hidden");renderAll();saveState();
+if ($("tl-cancel")) $("tl-cancel").onclick = () => $("modal-overlay").classList.add("hidden");
+if ($("tl-save")) $("tl-save").onclick = () => {
+  const id = $("tl-load-id").value.trim() || "LOAD-"+(appState.truckloads.length+1);
+  const rows = appState.orders.filter(o => selectedPOs.has(o["PO Num"]||""));
+  const base = buildLoadFromRows({ loadId: id, rows, loadTypeHint: $("tl-load-type").value });
+  base.autoGenerated = false;
+  base.pickupDate = $("tl-pickup-date").value || base.pickupDate;
+  base.pickupWindow = $("tl-pickup-window").value.trim();
+  base.carrier = $("tl-carrier").value.trim() || base.carrier;
+  base.customer = $("tl-customer").value.trim() || base.customer;
+  base.bol = $("tl-bol").value.trim() || base.bol;
+  appState.truckloads.push(base);
+  $("modal-overlay").classList.add("hidden");
+  renderAll(); saveState();
 };
 
-// ===== DOCK / TODAY / HISTORY / METRICS short renders =====
+// ========= DOCK RENDER / EDIT =========
+function dockAssociates(){ return appState.team.filter(u=>u.role==="dock" && u.active).map(u=>u.name); }
+
 function renderDock(){
-  const b=$("dock-body");if(!b)return;b.innerHTML="";
-  for(const t of appState.truckloads){
-    b.insertAdjacentHTML("beforeend",`
-      <tr><td>${t.loadId}</td><td>${t.customer||""}</td><td>${t.carrier||""}</td>
-      <td>${t.loadType||""}</td><td>${t.pickupDate||""}</td><td>${t.cartons||0}</td><td>${t.pallets||0}</td>
-      <td>${t.stagedLocation||""}</td><td>${t.assignedTo||""}</td><td>${t.status||""}</td>
-      <td><button class="btn tiny" data-assign="${t.loadId}">Assign</button>
-      <button class="btn tiny secondary" data-stage="${t.loadId}">Fully Staged</button></td></tr>`);
-  }
-  document.querySelectorAll("[data-assign]").forEach(b=>b.onclick=()=>{
-    const id=b.dataset.assign;const t=appState.truckloads.find(x=>x.loadId===id);
-    if(!t)return;const who=prompt("Assign to who?");t.assignedTo=who||"";t.status="Being staged";renderAll();saveState();
+  const tb = $("dock-body"); if(!tb) return;
+  const q = ($("dock-search")?.value||"").toLowerCase();
+  tb.innerHTML = "";
+
+  const loads = [...appState.truckloads].sort((a,b)=> (a.pickupDate||"") < (b.pickupDate||"") ? -1 : 1);
+  loads.filter(t=>{
+    if(!q) return true;
+    return [t.loadId,t.customer,t.carrier,t.loadType,t.pickupDate,t.pickupWindow,t.stagedLocation,(t.assignedTo||[]).join(", "),t.status]
+      .some(v=>String(v||"").toLowerCase().includes(q));
+  }).forEach(t=>{
+    const tr=document.createElement("tr");
+    tr.innerHTML = `
+      <td>${t.loadId}</td>
+      <td>${t.customer||""}</td>
+      <td>${t.carrier||""}</td>
+      <td>${t.loadType||""}</td>
+      <td>${t.pickupDate||""}</td>
+      <td>${t.pickupWindow||""}</td>
+      <td>${t.cartons||0}</td>
+      <td>${t.pallets||0}</td>
+      <td><input class="cell-input" data-bind="actualPallets" data-id="${t.loadId}" type="number" min="0" value="${t.actualPallets||0}"></td>
+      <td><input class="cell-input" data-bind="stagedLocation" data-id="${t.loadId}" value="${t.stagedLocation||""}"></td>
+      <td>
+        <input class="cell-input" data-bind="assignedTo" data-id="${t.loadId}" placeholder="Type names... (comma separated)" value="${(t.assignedTo||[]).join(", ")}">
+      </td>
+      <td>${t.status||""}</td>
+      <td>
+        <button class="btn tiny" data-assign="${t.loadId}">Start</button>
+        <button class="btn tiny secondary" data-stage="${t.loadId}">Fully Staged</button>
+      </td>
+    `;
+    tb.appendChild(tr);
   });
-  document.querySelectorAll("[data-stage]").forEach(b=>b.onclick=()=>{
-    const id=b.dataset.stage;const t=appState.truckloads.find(x=>x.loadId===id);
-    if(!t)return;t.status="Fully staged";renderAll();saveState();
+
+  // inline edits
+  tb.querySelectorAll(".cell-input").forEach(inp=>{
+    inp.onchange = () => {
+      const t = appState.truckloads.find(x=>x.loadId===inp.dataset.id); if(!t) return;
+      const key = inp.dataset.bind;
+      if (key==="assignedTo") t[key] = inp.value.split(",").map(s=>s.trim()).filter(Boolean);
+      else if (key==="actualPallets") t[key] = +inp.value||0;
+      else t[key] = inp.value;
+      saveState();
+    };
+  });
+
+  // actions
+  tb.querySelectorAll("[data-assign]").forEach(b=>b.onclick=()=>{
+    const t=appState.truckloads.find(x=>x.loadId===b.dataset.assign); if(!t) return;
+    t.status="Being staged"; saveState(); renderAll();
+  });
+  tb.querySelectorAll("[data-stage]").forEach(b=>b.onclick=()=>{
+    const t=appState.truckloads.find(x=>x.loadId===b.dataset.stage); if(!t) return;
+    t.status="Fully staged"; saveState(); renderAll();
   });
 }
-function renderTodays(){const b=$("today-body");if(!b)return;b.innerHTML="";
-  for(const t of appState.truckloads){
-    b.insertAdjacentHTML("beforeend",`<tr><td>${t.loadId}</td><td>${t.customer||""}</td><td>${t.carrier||""}</td>
-      <td>${t.loadType||""}</td><td>${t.pickupDate||""}</td><td>${t.cartons||0}</td><td>${t.status||""}</td>
+if ($("dock-search")) $("dock-search").oninput = ()=>renderDock();
+if ($("dock-clear")) $("dock-clear").onclick = ()=>{ $("dock-search").value=""; renderDock(); };
+
+// ========= TODAY'S PICKUPS =========
+function renderTodays(){
+  const tb = $("today-body"); if(!tb) return;
+  tb.innerHTML = "";
+  const today = todayYMD();
+  const loads = appState.truckloads.filter(t=>t.pickupDate && sameDate(t.pickupDate, today));
+
+  loads.sort((a,b)=>{
+    const p = a.status==="At door" ? -1 : a.status==="Departed" ? 1 : 0;
+    const q = b.status==="At door" ? -1 : b.status==="Departed" ? 1 : 0;
+    return p-q;
+  }).forEach(t=>{
+    const tr=document.createElement("tr");
+    tr.className = t.status==="At door" ? "row-arrived" : t.status==="Departed" ? "row-departed" : "";
+    tr.innerHTML = `
+      <td>${t.loadId}</td><td>${t.customer||""}</td><td>${t.carrier||""}</td><td>${t.loadType||""}</td>
+      <td>${t.pickupWindow||""}</td><td>${t.cartons||0}</td>
+      <td><input class="cell-input" data-bind="loadedBy" data-id="${t.loadId}" placeholder="Comma separated" value="${(t.loadedBy||[]).join(", ")}"></td>
+      <td>${t.status||""}</td>
       <td><button class="btn tiny" data-arrived="${t.loadId}">Arrived</button></td>
-      <td><button class="btn tiny secondary" data-departed="${t.loadId}">Departed</button></td></tr>`);
-  }
-  document.querySelectorAll("[data-arrived]").forEach(b=>b.onclick=()=>{
-    const t=appState.truckloads.find(x=>x.loadId===b.dataset.arrived);if(t){t.status="At door";renderAll();saveState();}});
-  document.querySelectorAll("[data-departed]").forEach(b=>b.onclick=()=>{
-    const t=appState.truckloads.find(x=>x.loadId===b.dataset.departed);
-    if(t){t.status="Departed";appState.history.push({loadId:t.loadId,customer:t.customer,carrier:t.carrier,pickupDate:t.pickupDate,bol:t.bol,status:"Departed"});renderAll();saveState();}});
-}
-function renderHistory(){const b=$("history-body");if(!b)return;b.innerHTML="";
-  for(const h of appState.history)b.insertAdjacentHTML("beforeend",`<tr><td>${h.loadId}</td><td>${h.customer||""}</td><td>${h.carrier||""}</td><td>${h.pickupDate||""}</td><td>${h.bol||""}</td><td>${h.status}</td></tr>`);
-}
-function renderMetrics(){
-  if($("m-trucks-today"))$("m-trucks-today").textContent=appState.truckloads.length;
-  if($("m-cartons"))$("m-cartons").textContent=appState.truckloads.reduce((s,t)=>s+(t.cartons||0),0);
-  if($("m-staged"))$("m-staged").textContent=appState.truckloads.filter(t=>t.status==="Fully staged").length;
+      <td><button class="btn tiny secondary" data-departed="${t.loadId}">Departed</button></td>
+    `;
+    tb.appendChild(tr);
+  });
+
+  tb.querySelectorAll("[data-arrived]").forEach(b=>b.onclick=()=>{
+    const t=appState.truckloads.find(x=>x.loadId===b.dataset.arrived); if(!t)return;
+    t.status="At door"; saveState(); renderTodays(); renderTruckloads();
+  });
+  tb.querySelectorAll("[data-departed]").forEach(b=>b.onclick=()=>{
+    const t=appState.truckloads.find(x=>x.loadId===b.dataset.departed); if(!t)return;
+    t.status="Departed"; t.departed=true;
+    // add to history immediately
+    appState.history.push({ loadId:t.loadId, customer:t.customer, carrier:t.carrier, pickupDate:t.pickupDate, pickupWindow:t.pickupWindow, status:"Departed" });
+    saveState(); renderTodays(); renderHistory(); renderTruckloads();
+  });
+
+  tb.querySelectorAll(".cell-input[data-bind='loadedBy']").forEach(inp=>{
+    inp.onchange=()=>{ const t=appState.truckloads.find(x=>x.loadId===inp.dataset.id); if(!t)return; t.loadedBy=inp.value.split(",").map(s=>s.trim()).filter(Boolean); saveState(); };
+  });
 }
 
-// ===== TRUCKLOADS + DRILL-DOWN =====
+// ========= TRUCKLOADS + DRILL-DOWN =========
 function renderTruckloads(){
-  const b=$("truckloads-body");if(!b)return;b.innerHTML="";
-  for(const t of appState.truckloads){
-    b.insertAdjacentHTML("beforeend",`<tr class="tl-row" data-id="${t.loadId}">
-      <td>${t.loadId}</td><td>${t.customer||""}</td><td>${t.carrier||""}</td>
-      <td>${t.loadType||""}</td><td>${t.pickupDate||""}</td><td>${t.cartons||0}</td><td>${t.status||""}</td></tr>`);
-  }
-  // drill-down wiring
-  document.querySelectorAll(".tl-row").forEach(row=>row.onclick=()=>{
-    const id=row.dataset.id;
-    const load=appState.truckloads.find(t=>t.loadId===id);
-    if(!load)return;
-    const b=document.getElementById("tl-detail-body");
-    b.innerHTML=load.masterGroups.map(m=>
-      `<div><strong>Master BOL:</strong> ${m.masterBol||"(none)"}<ul>`+
-      m.bols.map(bl=>`<li><strong>${bl.bol||"(no BOL)"}:</strong> ${bl.pos.map(p=>p.po).join(", ")}</li>`).join("")+
+  const tb = $("truckloads-body"); if(!tb) return;
+  tb.innerHTML="";
+  appState.truckloads.forEach(t=>{
+    const tr=document.createElement("tr");
+    tr.className="tl-row"; tr.dataset.id=t.loadId;
+    tr.innerHTML=`
+      <td>${t.loadId}</td><td>${t.customer||""}</td><td>${t.carrier||""}</td><td>${t.loadType||""}</td>
+      <td>${t.pickupDate||""}</td><td>${t.pickupWindow||""}</td><td>${t.cartons||0}</td><td>${t.status||""}</td>
+    `;
+    tb.appendChild(tr);
+  });
+
+  // drill-down wiring with edit
+  document.querySelectorAll(".tl-row").forEach(row => row.onclick = () => {
+    const id = row.dataset.id;
+    const load = appState.truckloads.find(t => t.loadId === id);
+    if (!load) return;
+
+    const body = $("tl-detail-body");
+    body.innerHTML = load.masterGroups.map(m =>
+      `<div class="mb"><strong>Master BOL:</strong> ${m.masterBol || "(none)"}<ul class="ul-compact">` +
+      m.bols.map(bl => `<li><strong>${bl.bol || "(no BOL)"}:</strong> ${bl.pos.map(p => p.po).join(", ")}</li>`).join("") +
       `</ul></div>`
     ).join("");
-    document.getElementById("tl-detail-title").textContent=`${load.loadId} — ${load.customer||""}`;
-    document.getElementById("tl-detail-overlay").classList.remove("hidden");
+
+    $("tl-detail-title").textContent = `${load.loadId} — ${load.customer||""}`;
+
+    $("ed-load-id").value = load.loadId||"";
+    $("ed-pickup-date").value = load.pickupDate||"";
+    $("ed-pickup-window").value = load.pickupWindow||"";
+    $("ed-carrier").value = load.carrier||"";
+    $("ed-customer").value = load.customer||"";
+
+    $("tl-detail-overlay").classList.remove("hidden");
+
+    $("tl-detail-close").onclick = () => $("tl-detail-overlay").classList.add("hidden");
+    $("tl-detail-save").onclick = () => {
+      load.loadId = $("ed-load-id").value.trim() || load.loadId;
+      load.pickupDate = $("ed-pickup-date").value;
+      load.pickupWindow = $("ed-pickup-window").value.trim();
+      load.carrier = $("ed-carrier").value.trim();
+      load.customer = $("ed-customer").value.trim();
+      saveState(); renderAll();
+      $("tl-detail-overlay").classList.add("hidden");
+    };
   });
 }
 
-// ===== RENDER ALL =====
-function renderAll(){renderOrders();renderTruckloads();renderDock();renderTodays();renderHistory();renderMetrics();}
+// ========= HISTORY =========
+function renderHistory(){
+  const tb=$("history-body"); if(!tb) return; tb.innerHTML="";
+  const q = ($("history-search")?.value||"").toLowerCase();
+  appState.history.filter(h=>{
+    if(!q) return true;
+    return [h.loadId,h.customer,h.carrier,h.pickupDate,h.pickupWindow,h.status].some(v=>String(v||"").toLowerCase().includes(q));
+  }).forEach(h=>{
+    const tr=document.createElement("tr");
+    tr.innerHTML=`<td>${h.loadId}</td><td>${h.customer||""}</td><td>${h.carrier||""}</td><td>${h.pickupDate||""}</td><td>${h.pickupWindow||""}</td><td>${h.status}</td>`;
+    tr.onclick = () => {
+      const fakeRow = document.querySelector(`.tl-row[data-id="${h.loadId}"]`);
+      if(fakeRow) fakeRow.click();
+    };
+    tb.appendChild(tr);
+  });
+}
+if ($("history-search")) $("history-search").oninput=()=>renderHistory();
+if ($("history-clear")) $("history-clear").onclick=()=>{ $("history-search").value=""; renderHistory(); };
 
-// ===== INIT =====
-loadState();renderAll();
+// ========= METRICS (simple cards) =========
+function renderMetrics(){
+  const month = new Date().toISOString().slice(0,7);
+  const mLoads = appState.truckloads.filter(t=> (t.pickupDate||"").startsWith(month)).length;
+  const totalCartons = appState.truckloads.reduce((s,t)=>s+(t.cartons||0),0);
+  const staged = appState.truckloads.filter(t=>t.status==="Fully staged").length;
+  if ($("m-total-loads")) $("m-total-loads").textContent=mLoads;
+  if ($("m-cartons")) $("m-cartons").textContent=totalCartons;
+  if ($("m-staged")) $("m-staged").textContent=staged;
+}
+
+// ========= CALENDAR =========
+let calAnchor = new Date();
+function dateAdd(d,days){const x=new Date(d);x.setDate(x.getDate()+days);return x;}
+function fmtTitle(d){return d.toLocaleString(undefined,{month:"long",year:"numeric"});}
+
+function renderCalendar(){
+  const grid = $("calendar-grid"); if(!grid) return;
+  const view = $("cal-view")?.value || "month";
+  const filter = ($("cal-filter")?.value||"").toLowerCase();
+
+  let start, days;
+  const dow = (calAnchor.getDay()+6)%7; // Monday=0
+  if(view==="wk"){ start = dateAdd(calAnchor, -dow); days = 7; }
+  else if(view==="2w"){ start = dateAdd(calAnchor, -dow); days = 14; }
+  else { const mStart = new Date(calAnchor.getFullYear(), calAnchor.getMonth(), 1); const lead=(mStart.getDay()+6)%7; start=dateAdd(mStart,-lead); days=42; }
+
+  $("cal-title").textContent = fmtTitle(calAnchor);
+  grid.innerHTML="";
+
+  for(let i=0;i<days;i++){
+    const day = dateAdd(start, i);
+    const cell = document.createElement("div");
+    cell.className = "cal-cell";
+    cell.dataset.date = ymd(day);
+    cell.innerHTML = `<div class="cal-cell-head">${day.getDate()}</div><div class="cal-cell-body"></div>`;
+    // drop zone
+    cell.ondragover = ev => ev.preventDefault();
+    cell.ondrop = ev => {
+      ev.preventDefault();
+      const loadId = ev.dataTransfer.getData("text/plain");
+      const t = appState.truckloads.find(x=>x.loadId===loadId);
+      if(!t) return;
+      const targetDate = cell.dataset.date;
+
+      // per-time-block capacity validation
+      const win = (t.pickupWindow||"").trim() || "(unspecified)";
+      const block = appState.settings.blocks.find(b=>b.window===win);
+      const limit = block ? (block.max[t.loadType] ?? appState.settings["max"+(t.loadType==="Truckload"?"TL":t.loadType)]) :
+                            (t.loadType==="LTL" ? appState.settings.maxLTL :
+                             t.loadType==="Truckload" ? appState.settings.maxTL : appState.settings.maxFloor);
+
+      const same = appState.truckloads.filter(l =>
+        l.pickupDate === targetDate &&
+        l.loadType === t.loadType &&
+        ((l.pickupWindow||"").trim() || "(unspecified)") === win
+      );
+
+      if (same.length >= limit){
+        alert(`Move blocked.\n\nThe ${t.loadType} limit for "${win}" on ${targetDate} is ${limit}.\nAlready scheduled: ${same.length}.`);
+        return;
+      }
+
+      t.pickupDate = targetDate;
+      saveState(); renderAll();
+    };
+
+    // loads on this date
+    const items = appState.truckloads.filter(t=>t.pickupDate && sameDate(t.pickupDate, day))
+      .filter(t=> !filter || (t.customer||"").toLowerCase().includes(filter) || (t.carrier||"").toLowerCase().includes(filter));
+
+    const body = cell.querySelector(".cal-cell-body");
+    items.forEach(t=>{
+      const chip=document.createElement("div");
+      chip.className="cal-chip";
+      chip.draggable=true;
+      chip.ondragstart=(ev)=>ev.dataTransfer.setData("text/plain", t.loadId);
+      const time = t.pickupWindow ? `${t.pickupWindow} | ` : "";
+      chip.textContent = `${time}${t.customer||""} | ${t.carrier||""}`;
+      chip.title = `${t.loadId}\n${t.pickupDate} ${t.pickupWindow||""}\n${t.customer||""} | ${t.carrier||""}`;
+      chip.onclick = ()=>{
+        const row = document.querySelector(`.tl-row[data-id="${t.loadId}"]`);
+        if(row) row.click();
+      };
+      body.appendChild(chip);
+    });
+
+    grid.appendChild(cell);
+  }
+}
+
+if ($("cal-prev")) $("cal-prev").onclick=()=>{ const v=$("cal-view").value; calAnchor = v==="wk"?dateAdd(calAnchor,-7):v==="2w"?dateAdd(calAnchor,-14):new Date(calAnchor.getFullYear(), calAnchor.getMonth()-1, 1); renderCalendar(); };
+if ($("cal-next")) $("cal-next").onclick=()=>{ const v=$("cal-view").value; calAnchor = v==="wk"?dateAdd(calAnchor,7):v==="2w"?dateAdd(calAnchor,14):new Date(calAnchor.getFullYear(), calAnchor.getMonth()+1, 1); renderCalendar(); };
+if ($("cal-view")) $("cal-view").onchange=renderCalendar;
+if ($("cal-filter")) $("cal-filter").oninput=renderCalendar;
+
+// ========= TEAM (CRUD) =========
+function renderTeam(){
+  const ul=$("team-list"); if(!ul) return; ul.innerHTML="";
+  appState.team.forEach(u=>{
+    const li=document.createElement("li");
+    li.innerHTML=`<strong>${u.name}</strong> — ${u.role} • ${u.shift} • ${u.active?"active":"inactive"} <button class="btn tiny" data-edit="${u.id}">Edit</button>`;
+    ul.appendChild(li);
+  });
+  ul.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>{
+    const u=appState.team.find(x=>x.id===b.dataset.edit); if(!u) return;
+    $("team-id").value=u.id; $("team-name").value=u.name; $("team-email").value=u.email;
+    $("team-role").value=u.role; $("team-shift").value=u.shift; $("team-active").checked=!!u.active;
+    $("team-theme").value=u.theme||"light"; $("team-lang").value=u.lang||"en";
+  });
+}
+if ($("team-form")) $("team-form").onsubmit = (e)=>{
+  e.preventDefault();
+  const id = $("team-id").value || crypto.randomUUID();
+  const obj = {
+    id, name:$("team-name").value.trim(), email:$("team-email").value.trim(),
+    role:$("team-role").value, shift:$("team-shift").value,
+    active:$("team-active").checked, theme:$("team-theme").value, lang:$("team-lang").value
+  };
+  const idx = appState.team.findIndex(x=>x.id===id);
+  if(idx>=0) appState.team[idx]=obj; else appState.team.push(obj);
+  $("team-id").value=""; $("team-form").reset();
+  saveState(); renderTeam();
+};
+if ($("team-delete")) $("team-delete").onclick=()=>{
+  const id=$("team-id").value; if(!id) return;
+  appState.team = appState.team.filter(x=>x.id!==id);
+  $("team-id").value=""; $("team-form").reset(); saveState(); renderTeam();
+};
+if ($("team-reset")) $("team-reset").onclick=()=>{ $("team-id").value=""; $("team-form").reset(); };
+
+// ========= SETTINGS (blocks) =========
+function renderBlocks(){
+  const tb=$("blocks-body"); if(!tb) return; tb.innerHTML="";
+  appState.settings.blocks.forEach((b,i)=>{
+    const tr=document.createElement("tr");
+    tr.innerHTML=`
+      <td>${b.window}</td>
+      <td><input class="cell-input" data-block="${i}" data-type="LTL" type="number" min="0" value="${b.max.LTL}"/></td>
+      <td><input class="cell-input" data-block="${i}" data-type="Truckload" type="number" min="0" value="${b.max.Truckload}"/></td>
+      <td><input class="cell-input" data-block="${i}" data-type="Floorload" type="number" min="0" value="${b.max.Floorload}"/></td>
+      <td><button class="btn tiny danger" data-del="${i}">Delete</button></td>
+    `;
+    tb.appendChild(tr);
+  });
+  tb.querySelectorAll(".cell-input").forEach(inp=>{
+    inp.onchange=()=>{ const i=+inp.dataset.block; const t=inp.dataset.type; appState.settings.blocks[i].max[t]=+inp.value||0; saveState(); };
+  });
+  tb.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{ appState.settings.blocks.splice(+b.dataset.del,1); saveState(); renderBlocks(); });
+}
+if ($("add-block")) $("add-block").onclick=()=>{
+  const w=$("block-window").value.trim(); if(!w) return;
+  const l=+$("block-ltl").value||0, tl=+$("block-tl").value||0, f=+$("block-floor").value||0;
+  appState.settings.blocks.push({ window:w, max:{ LTL:l, Truckload:tl, Floorload:f } });
+  $("block-window").value=""; $("block-ltl").value=""; $("block-tl").value=""; $("block-floor").value="";
+  saveState(); renderBlocks();
+};
+["max-ltl","max-tl","max-floor"].forEach(id=>{
+  if($(id)) $(id).onchange=()=>{ const v=+$(id).value||0; if(id==="max-ltl") appState.settings.maxLTL=v; if(id==="max-tl") appState.settings.maxTL=v; if(id==="max-floor") appState.settings.maxFloor=v; saveState(); };
+});
+
+// ========= NIGHTLY HISTORY ARCHIVAL (client-side) =========
+function sweepHistoryIfMidnight(){
+  const localYmd = todayYMD();
+  if (appState.settings.lastHistorySweepYMD === localYmd) return;
+  // move departed loads with pickupDate < today into history (idempotent)
+  appState.truckloads.filter(t=>t.status==="Departed" && t.pickupDate && t.pickupDate < localYmd).forEach(t=>{
+    if(!appState.history.find(h=>h.loadId===t.loadId)) appState.history.push({ loadId:t.loadId, customer:t.customer, carrier:t.carrier, pickupDate:t.pickupDate, pickupWindow:t.pickupWindow, status:"Departed" });
+  });
+  appState.settings.lastHistorySweepYMD = localYmd; saveState(); renderHistory();
+}
+setInterval(sweepHistoryIfMidnight, 60*1000);
+
+// ========= RENDER ALL =========
+function renderAll(){ renderOrders(true); renderTruckloads(); renderDock(); renderTodays(); renderHistory(); renderMetrics(); renderBlocks(); }
+loadState(); renderAll(); sweepHistoryIfMidnight();
