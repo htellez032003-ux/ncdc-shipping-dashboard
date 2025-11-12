@@ -855,15 +855,30 @@ function renderTodays(){
 // ========= TRUCKLOADS + DRILL-DOWN =========
 function renderTruckloads(){
   const tb = $("truckloads-body"); if(!tb) return;
-  tb.innerHTML="";
-  appState.truckloads.forEach(t=>{
-    const tr=document.createElement("tr");
-    tr.className="tl-row"; tr.dataset.id=t.loadId;
-    tr.innerHTML=`
-      <td>${t.loadId}</td><td>${t.customer||""}</td><td>${t.carrier||""}</td><td>${t.loadType||""}</td>
-      <td>${t.pickupDate||""}</td><td>${t.pickupWindow||""}</td><td>${t.cartons||0}</td><td>${t.status||""}</td>
+   tb.innerHTML = "";
+  appState.truckloads.forEach(t => {
+    const tr = document.createElement("tr");
+    tr.className = "tl-row";
+    tr.dataset.id = t.loadId;
+
+    const needsMaster = String(t.status || "").includes("Master BOL");
+    const badge = needsMaster
+      ? `<span class="badge badge-warn" title="Master BOL Required">⚠</span>`
+      : "";
+
+    tr.innerHTML = `
+      <td>${t.loadId} ${badge}</td>
+      <td>${t.customer || ""}</td>
+      <td>${t.carrier || ""}</td>
+      <td>${t.loadType || ""}</td>
+      <td>${t.pickupDate || ""}</td>
+      <td>${t.pickupWindow || ""}</td>
+      <td>${t.cartons || 0}</td>
+      <td>${t.status || ""}</td>
     `;
     tb.appendChild(tr);
+  });
+
   });
 
   document.querySelectorAll(".tl-row").forEach(row => row.onclick = () => {
