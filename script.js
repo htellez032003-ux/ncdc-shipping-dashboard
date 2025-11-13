@@ -1133,15 +1133,39 @@ function sweepHistoryIfMidnight(){
 }
 setInterval(sweepHistoryIfMidnight, 60*1000);
 
-// ========= RENDER ALL + BOOTSTRAP =========
-function renderAll(){ renderOrders(true); renderTruckloads(); renderDock(); renderTodays(); renderHistory(); renderMetrics(); }
+// ========= RENDER ALL + CORRECT BOOTSTRAP ORDER =========
 
-loadStateSync();
-appState.orders = (appState.orders||[]).map(o => o.__shipBy ? o : computeOrderDerived(o));
-if(appState.session?.authed){
-  $("login-screen").classList.add("hidden");
-  $("app-shell").classList.remove("hidden");
-}
-renderAll();
-loadStateAsync();
-sweepHistoryIfMidnight();
+// Boot sequence correction:
+// 1) Load LocalStorage
+// 2) Load IndexedDB (if exists, overwrites LocalStorage copy)
+// 3) THEN render for the first time
+// 4) Only after render do we allow saveState() to run again
+
+(async function boot(){
+  // Step 1: Load LocalStorage
+  loadStateSync();
+
+  // Step 2: Load IndexedDB (if available)
+  const idbState = await idbGet(STORAGE_KEY);
+  if (idbState) {
+    Object.assign(appState, idbState);
+  }
+
+  // Step 3: Compute missing derived fields
+  appState.orders = (appState.orders||[]).map(o =>
+    o.__shipBy ? o : computeOrderDerived(o)
+  );
+
+  // Step 4: Auto-login if session stored
+  if(appState.session?.authed){
+    $("login-screen").classList.add("hidden");
+    $("app-shell").classList.remove("hidden");
+  }
+
+  // Step 5: FIRST RENDER (no overwriting storage)
+  renderAll();
+  sweepHistoryIfMidnight();
+
+  // Step 6: Only after first render do we allow saves again
+  saveState();
+})();
