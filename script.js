@@ -1,7 +1,7 @@
-// script.js — NCDC Dashboard (persistent + smart router)
+// script.js — NCDC Dashboard (persistent + smart router + small parcel)
 
-// ========= STORAGE / LIMITS =========
-const STORAGE_KEY = "ncdcShippingStateV5";
+// ========= STORAGE / CONSTANTS =========
+const STORAGE_KEY = "ncdcShippingStateV6";
 const MAX_UNITS_PER_TRUCK = 30000;
 const MAX_CARTS_PER_TRUCK = 2600;
 
@@ -27,7 +27,7 @@ const appState = {
   }
 };
 
-// ========= IndexedDB (mirror) =========
+// ========= IndexedDB (fallback mirror) =========
 let _idb;
 async function idbOpen(){
   return new Promise((res,rej)=>{
@@ -39,7 +39,7 @@ async function idbOpen(){
 }
 async function idbGet(key){
   try{
-    _idb = _idb || await idbOpen();
+    _idb = _idb||await idbOpen();
     return await new Promise((res,rej)=>{
       const tx=_idb.transaction("state","readonly").objectStore("state").get(key);
       tx.onsuccess=()=>res(tx.result); tx.onerror=()=>rej(tx.error);
@@ -48,7 +48,7 @@ async function idbGet(key){
 }
 async function idbSet(key,val){
   try{
-    _idb = _idb || await idbOpen();
+    _idb = _idb||await idbOpen();
     return await new Promise((res,rej)=>{
       const tx=_idb.transaction("state","readwrite").objectStore("state").put(val,key);
       tx.onsuccess=()=>res(true); tx.onerror=()=>rej(tx.error);
@@ -64,14 +64,23 @@ async function loadStateAsync(){ const s = await idbGet(STORAGE_KEY); if(s){ Obj
 function saveState(){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(appState)); idbSet(STORAGE_KEY, appState); }catch{} }
 function mostCommon(a){const c={};let m="",n=0;for(const v of a){const k=v||"";c[k]=(c[k]||0)+1;if(c[k]>n){n=c[k];m=k}}return m;}
 function sumNumber(rows, col){return rows.reduce((s,x)=>s+(+((x[col]||"").replace(/,/g,""))||0),0);}
-function earliestDate(a){const d=a.map(x=>x&&new Date(x)).filter(x=>x&&x>0);if(!d.length)return"";d.sort((a,b)=>a-b);return d[0].toISOString().slice(0,10);}
-function sameDate(a,b){const x=new Date(a),y=new Date(b);x.setHours(0,0,0,0);y.setHours(0,0,0,0);return x.getTime()===y.getTime();}
+function earliestDate(a){
+  const d=a.map(x=>x&&new Date(x)).filter(x=>x&&x>0);
+  if(!d.length)return"";
+  d.sort((a,b)=>a-b);
+  return d[0].toISOString().slice(0,10);
+}
+function sameDate(a,b){
+  const x=new Date(a),y=new Date(b);
+  x.setHours(0,0,0,0);y.setHours(0,0,0,0);
+  return x.getTime()===y.getTime();
+}
 function ymd(d){return new Date(d).toISOString().slice(0,10);}
 function parseYMD(str){ if(!str) return null; const d=new Date(str); return isNaN(d)?null:d; }
 function addDays(d, n){ const x=new Date(d); x.setDate(x.getDate()+n); return x; }
 function clampDateToCancel(reco, cancel){ if(!cancel) return reco; const rc=new Date(reco), cc=new Date(cancel); return rc>cc?cc:rc; }
 
-// ========= LOGIN / NAV =========
+// ========= LOGIN / NAV (persistent) =========
 if ($("login-btn")) $("login-btn").onclick = () => {
   const email = $("login-email").value.trim();
   const pass = $("login-password").value.trim();
@@ -101,14 +110,6 @@ document.querySelectorAll(".nav-link").forEach(b => b.onclick = () => {
   if (tab==="calendar") renderCalendar();
 });
 
-// Auto-login if session persisted
-(function bootAuth(){
-  if(appState.session?.authed){
-    $("login-screen").classList.add("hidden");
-    $("app-shell").classList.remove("hidden");
-  }
-})();
-
 // ========= SUGGESTION MODAL =========
 (function ensureSuggestionModal(){
   if (document.getElementById("suggest-overlay")) return;
@@ -132,7 +133,7 @@ document.querySelectorAll(".nav-link").forEach(b => b.onclick = () => {
   $("suggest-close").onclick = ()=> $("suggest-overlay").classList.add("hidden");
 })();
 
-// ========= AUTO-ROUTER MODAL =========
+// ========= SMART ROUTER MODAL =========
 (function ensureAutoRouterModal(){
   if (document.getElementById("auto-overlay")) return;
   const wrap = document.createElement("div");
@@ -144,7 +145,10 @@ document.querySelectorAll(".nav-link").forEach(b => b.onclick = () => {
       <div id="auto-summary" class="muted" style="margin-bottom:8px;"></div>
       <table class="data-table" id="auto-table">
         <thead>
-          <tr><th></th><th>Proposed Load</th><th>Date</th><th>Window</th><th>Carrier</th><th>POs</th><th>Units</th><th>Cartons</th><th>Fill %</th><th>Notes</th></tr>
+          <tr>
+            <th></th><th>Proposed Load</th><th>Date</th><th>Window</th>
+            <th>Carrier</th><th>POs</th><th>Units</th><th>Cartons</th><th>Fill %</th><th>Notes</th>
+          </tr>
         </thead>
         <tbody></tbody>
       </table>
@@ -158,7 +162,7 @@ document.querySelectorAll(".nav-link").forEach(b => b.onclick = () => {
   $("auto-cancel").onclick = ()=> $("auto-overlay").classList.add("hidden");
 })();
 
-// Add Auto-Route button in Orders toolbar
+// Add "Auto-Route Orders" button in Orders toolbar
 (function injectAutoButton(){
   const bar = document.querySelector(".orders-toolbar .selected-box");
   if(!bar || document.getElementById("auto-route-btn")) return;
@@ -170,14 +174,14 @@ document.querySelectorAll(".nav-link").forEach(b => b.onclick = () => {
   bar.appendChild(btn);
 })();
 
-// ========= CSV UPLOAD (robust parser + MERGE) =========
+// ========= CSV UPLOAD (MERGE, not wipe) =========
 if ($("orders-csv")) $("orders-csv").addEventListener("change", e => {
   const f = e.target.files[0]; if(!f) return;
   const r = new FileReader();
   r.onload = ev => {
     const text = ev.target.result;
     const incoming = parseCSVRobust(text).map(o => computeOrderDerived(o));
-    mergeOrders(incoming); // merge, do not wipe
+    mergeOrders(incoming);
     buildTruckloadsFromOrders();
     hydrateFilterColumnDropdown();
     $("csv-updated").textContent = "CSV updated: " + new Date().toLocaleString();
@@ -196,7 +200,8 @@ function parseCSVRobust(text){
     else if((ch==='\n'||ch==='\r') && !q){
       if(val.length||row.length){ row.push(val); rows.push(row); row=[]; val=""; }
       if(ch==='\r' && text[i+1]==='\n') i++;
-    } else val+=ch;
+    }
+    else val+=ch;
   }
   if(val.length||row.length){ row.push(val); rows.push(row); }
   const header = rows.shift().map(h=>h.trim());
@@ -250,7 +255,7 @@ function computeOrderDerived(o){
   return o;
 }
 
-// ========= BUILD LOADS FROM ORDERS (baseline) =========
+// ========= GROUPING / BUILD LOADS (baseline) =========
 function buildTruckloadsFromOrders(){
   const manual = appState.truckloads.filter(t=>!t.autoGenerated);
   const auto = [];
@@ -345,7 +350,11 @@ if ($("add-col-filter")) $("add-col-filter").onclick = () => {
   $("orders-col-value").value="";
   renderActiveFilters(); renderOrders();
 };
-if ($("clear-filters")) $("clear-filters").onclick = () => { dynamicFilters.length=0; $("orders-search").value=""; renderActiveFilters(); renderOrders(true); };
+if ($("clear-filters")) $("clear-filters").onclick = () => {
+  dynamicFilters.length=0;
+  $("orders-search").value="";
+  renderActiveFilters(); renderOrders(true);
+};
 function renderActiveFilters(){
   const box = $("active-filters"); if(!box) return;
   box.innerHTML = dynamicFilters.map((f,i)=>`<span class="chip">${f.col} = "${f.value}" <button data-del="${i}" class="chip-x">×</button></span>`).join("");
@@ -423,7 +432,7 @@ if ($("select-all-orders")) $("select-all-orders").onchange = e => {
 function capacityCheck(load, rows){
   const unitsNow = rows.reduce((s,r)=> s + (r.__units||0), 0);
   const cartsNow = rows.reduce((s,r)=> s + (r.__cartons||0), 0);
-  const loadUnits = 0; // unknown historic; enforce by cartons + per-truck units
+  const loadUnits = 0;
   const loadCarts = +load.cartons || 0;
   const unitsOK = (loadUnits + unitsNow) <= MAX_UNITS_PER_TRUCK;
   const cartsOK = (loadCarts + cartsNow) <= MAX_CARTS_PER_TRUCK;
@@ -463,7 +472,7 @@ function mergeRowsIntoLoad(t, rows){
   t.cube    += sumNumber(rows,"Total Cubic");
 }
 
-// ========= SUGGESTION MODAL FLOW =========
+// ========= ASSIGNMENT with SAFETY NET =========
 let _suggestContext = null;
 function showSuggestionModal({reason, rows, targetLoad}){
   const overlay = $("suggest-overlay");
@@ -481,6 +490,7 @@ function showSuggestionModal({reason, rows, targetLoad}){
 
   const unitsSel = rows.reduce((s,r)=>s+(r.__units||0),0);
   const cartsSel = rows.reduce((s,r)=>s+(r.__cartons||0),0);
+
   msg.textContent = `${reason} • Selected: ${unitsSel.toLocaleString()} units, ${cartsSel.toLocaleString()} cartons • Target date ${recoDate||"-"}`;
 
   exDiv.innerHTML = candidates.length ? `
@@ -535,7 +545,7 @@ if ($("suggest-apply")) $("suggest-apply").onclick = () => {
   renderAll(); saveState();
 };
 
-// ========= ASSIGN POs TO EXISTING LOAD (with safety net) =========
+// assign selected POs to an existing load
 if ($("assign-pos-to-load")) $("assign-pos-to-load").onclick = () => {
   const id = $("assign-existing-load").value; if(!id || selectedPOs.size===0) return;
   const t = appState.truckloads.find(x=>x.loadId===id); if(!t) return;
@@ -553,7 +563,7 @@ if ($("assign-pos-to-load")) $("assign-pos-to-load").onclick = () => {
   renderAll(); saveState();
 };
 
-// ========= CREATE TRUCKLOAD (prefill + validation) =========
+// create truckload modal (prefill)
 if ($("create-truckload-btn")) $("create-truckload-btn").onclick = () => {
   if (!selectedPOs.size){ alert("Select at least one PO."); return; }
   $("modal-selected-pos").textContent = "POs: " + [...selectedPOs].join(", ");
@@ -581,7 +591,6 @@ if ($("tl-save")) $("tl-save").onclick = () => {
   base.carrier = $("tl-carrier").value.trim() || base.carrier;
   base.customer = $("tl-customer").value.trim() || base.customer;
   base.bol = $("tl-bol").value.trim() || base.bol;
-
   const used = getSlotUsage(base.pickupDate, base.pickupWindow, base.loadType);
   const lim = getSlotLimit(base.pickupWindow, base.loadType);
   const cartsSel = rows.reduce((s,r)=>s+(r.__cartons||0),0);
@@ -600,7 +609,7 @@ if ($("tl-save")) $("tl-save").onclick = () => {
   renderAll(); saveState();
 };
 
-// ========= SMART AUTO-ROUTER ENGINE (center-aware) =========
+// ========= SMART AUTO-ROUTER ENGINE (with small parcel) =========
 function onAutoRouteClicked(){
   const useSelected = selectedPOs.size>0;
   const rows = useSelected
@@ -613,7 +622,7 @@ function onAutoRouteClicked(){
   renderAutoModal(proposals);
 }
 
-/* core grouping */
+/* --- auto-routing core --- */
 function buildAutoProposals(rows){
   const sorted = [...rows].sort((a,b)=>{
     const p = (a.__priority==="HIGH"?0:a.__priority==="MEDIUM"?1:2) -
@@ -626,11 +635,85 @@ function buildAutoProposals(rows){
   const proposals = [];
   let nextLoadNum = appState.truckloads.length + 1;
 
-  // split by direct-store vs center
-  const direct = sorted.filter(r => !(r["Center"]||"").trim());
-  const centers = sorted.filter(r => (r["Center"]||"").trim());
+  const today = parseYMD(todayYMD());
+  const plus2 = addDays(today, 2);
 
-  // center groups: Center + Customer + Carrier
+  // --- phase 0: peel off small parcel (UPS / FXB) within 2 days ---
+  const smallParcel = [];
+  const remaining = [];
+
+  sorted.forEach(r=>{
+    const shipper = (r["Shipper"]||"").trim().toUpperCase();
+    const startD = parseYMD(r["Start Date"]);
+    const isSP = (shipper==="UPS" || shipper==="FXB");
+    if (isSP && startD && startD <= plus2){
+      smallParcel.push(r);
+    } else {
+      remaining.push(r);
+    }
+  });
+
+  // group small parcel by shipper + effective date (Option C: earliest of Start Date vs recommended)
+  const spBuckets = new Map(); // key: SHIPPER|YYYY-MM-DD
+  smallParcel.forEach(r=>{
+    const shipper = (r["Shipper"]||"").trim().toUpperCase();
+    const startD = parseYMD(r["Start Date"]);
+    const recD = parseYMD(r.__recommendedShip);
+    let eff = startD || recD || today;
+    if (startD && recD && recD < eff) eff = recD; // Option C: earliest of start vs recommended
+    const dateStr = ymd(eff);
+    const key = shipper + "|" + dateStr;
+    if(!spBuckets.has(key)) spBuckets.set(key, []);
+    spBuckets.get(key).push(r);
+  });
+
+  for (const [key, list] of spBuckets){
+    const [shipper,date] = key.split("|");
+    let idx = 0;
+    let seq = 1;
+    while(idx < list.length){
+      let windowPick = null;
+      for(const w of blocks){
+        if(getSlotUsage(date,w,"Small Parcel")<getSlotLimit(w,"Small Parcel")){windowPick=w;break;}
+      }
+      if(!windowPick){
+        let d = new Date(date); let tries=0;
+        while(!windowPick && tries<7){
+          d.setDate(d.getDate()+1);
+          const tryDate = ymd(d);
+          for(const w of blocks){
+            if(getSlotUsage(tryDate,w,"Small Parcel")<getSlotLimit(w,"Small Parcel")){windowPick=w;date=tryDate;break;}
+          }
+          tries++;
+        }
+        if(!windowPick) windowPick = blocks[0];
+      }
+
+      const pack=[];let u=0,c=0;
+      while(idx<list.length){
+        const r=list[idx];
+        const fits=(u+(r.__units||0)<=MAX_UNITS_PER_TRUCK)&&(c+(r.__cartons||0)<=MAX_CARTS_PER_TRUCK);
+        if(!fits && pack.length>0) break;
+        pack.push(r);u+=r.__units||0;c+=r.__cartons||0;idx++;
+        if(u>=MAX_UNITS_PER_TRUCK||c>=MAX_CARTS_PER_TRUCK)break;
+      }
+      const fill=Math.min((c/MAX_CARTS_PER_TRUCK)*100,(u/MAX_UNITS_PER_TRUCK)*100);
+      proposals.push({
+        id:`AUTO-SP-${shipper}-${date}-${seq++}`,
+        type:"smallparcel",
+        parcelCarrier:shipper,
+        customer:"Multiple Customers",
+        date,window:windowPick,
+        rows:pack,units:u,cartons:c,fill:Math.round(fill)
+      });
+    }
+  }
+
+  // --- phase 1: separate remaining by center vs direct store ---
+  const direct = remaining.filter(r => !(r["Center"]||"").trim());
+  const centers = remaining.filter(r => (r["Center"]||"").trim());
+
+  // --- phase 2: consolidation-center groups ---
   const byCenter = new Map();
   centers.forEach(r=>{
     const key = (r["Center"]||"").trim()+"|"+(r["Cust Name"]||"").trim()+"|"+(r["Shipper"]||"").trim();
@@ -649,8 +732,11 @@ function buildAutoProposals(rows){
       }
       if(!windowPick){
         let d=new Date(date);let tries=0;
-        while(!windowPick && tries<7){d.setDate(d.getDate()+1);date=ymd(d);
-          for(const w of blocks){if(getSlotUsage(date,w,"Truckload")<getSlotLimit(w,"Truckload")){windowPick=w;break;}}
+        while(!windowPick && tries<7){
+          d.setDate(d.getDate()+1);const tryDate=ymd(d);
+          for(const w of blocks){
+            if(getSlotUsage(tryDate,w,"Truckload")<getSlotLimit(w,"Truckload")){windowPick=w;date=tryDate;break;}
+          }
           tries++;
         }
         if(!windowPick) windowPick=blocks[0];
@@ -674,7 +760,7 @@ function buildAutoProposals(rows){
     }
   }
 
-  // direct-store: solo; Amazon always solo
+  // --- phase 3: direct-store orders (store field non-center) ---
   direct.forEach(r=>{
     const isAmazon=String(r["Cust Name"]||"").toLowerCase().includes("amazon");
     const po=r["PO Num"]||crypto.randomUUID().slice(0,6);
@@ -699,22 +785,25 @@ function buildAutoProposals(rows){
   return proposals;
 }
 
-/* modal render + confirm */
+/* --- render proposal modal --- */
 function renderAutoModal(proposals){
   const tb=document.querySelector("#auto-table tbody");
   tb.innerHTML=proposals.map(p=>{
-    const warn=p.type==="center"?"⚠️ Master BOL Needed":p.amazon?"🟡 Amazon Solo":"";
+    let notes="";
+    if(p.type==="center") notes="⚠️ Master BOL Needed";
+    else if(p.type==="store" && p.amazon) notes="🟡 Amazon Solo";
+    else if(p.type==="smallparcel") notes=`📦 Small Parcel ${p.parcelCarrier}`;
     return `<tr class="${p.type==='center'?'row-warn':''}">
       <td><input type="checkbox" class="auto-pick" data-id="${p.id}" ${p.fill>=60?"checked":""}></td>
       <td>${p.id}</td>
       <td>${p.date}</td>
       <td>${p.window}</td>
-      <td>${p.carrier||""}</td>
+      <td>${p.carrier || p.parcelCarrier || ""}</td>
       <td>${p.rows.length}</td>
       <td>${p.units.toLocaleString()}</td>
       <td>${p.cartons.toLocaleString()}</td>
       <td>${p.fill}%</td>
-      <td>${warn}</td>
+      <td>${notes}</td>
     </tr>`;
   }).join("");
 
@@ -730,16 +819,23 @@ function renderAutoModal(proposals){
     confirmAutoProposals(proposals.filter(p=>ids.includes(p.id)));
   };
 }
+
+/* --- confirm proposals into real loads --- */
 function confirmAutoProposals(proposals){
   if(!proposals.length){$("auto-overlay").classList.add("hidden");return;}
   for(const p of proposals){
-    const base=buildLoadFromRows({loadId:p.id,rows:p.rows,loadTypeHint:"Truckload"});
+    const typeHint = p.type==="smallparcel" ? "Small Parcel" : "Truckload";
+    const base=buildLoadFromRows({loadId:p.id,rows:p.rows,loadTypeHint:typeHint});
     base.autoGenerated=false;
     base.pickupDate=p.date;
     base.pickupWindow=p.window;
-    base.carrier=p.carrier||base.carrier;
-    base.customer=p.customer||base.customer;
+    base.carrier=p.carrier || p.parcelCarrier || base.carrier;
+    base.customer=p.customer || base.customer;
     if(p.type==="center"){ base.status="⚠ Master BOL Required"; }
+    if(p.type==="smallparcel"){
+      base.status="Small Parcel – Ready";
+      base.customer = "Multiple Customers";
+    }
     appState.truckloads.push(base);
   }
   $("auto-overlay").classList.add("hidden");
@@ -850,23 +946,26 @@ function renderTodays(){
 function renderTruckloads(){
   const tb = $("truckloads-body"); if(!tb) return;
   tb.innerHTML = "";
-  appState.truckloads.forEach(t => {
-    const tr = document.createElement("tr");
-    tr.className = "tl-row";
-    tr.dataset.id = t.loadId;
+  appState.truckloads.forEach(t=>{
+    const tr=document.createElement("tr");
+    tr.className="tl-row";
+    tr.dataset.id=t.loadId;
 
     const needsMaster = String(t.status || "").includes("Master BOL");
-    const badge = needsMaster ? `<span class="badge badge-warn" title="Master BOL Required">⚠</span>` : "";
+    const isSmallParcel = t.loadType==="Small Parcel";
+    const masterBadge = needsMaster ? `<span class="badge badge-warn" title="Master BOL Required">⚠</span>` : "";
+    const spBadge = isSmallParcel ? `<span class="badge badge-info" title="Small Parcel Load">SP</span>` : "";
+    const badge = masterBadge || spBadge;
 
-    tr.innerHTML = `
+    tr.innerHTML=`
       <td>${t.loadId} ${badge}</td>
-      <td>${t.customer || ""}</td>
-      <td>${t.carrier || ""}</td>
-      <td>${t.loadType || ""}</td>
-      <td>${t.pickupDate || ""}</td>
-      <td>${t.pickupWindow || ""}</td>
-      <td>${t.cartons || 0}</td>
-      <td>${t.status || ""}</td>
+      <td>${t.customer||""}</td>
+      <td>${t.carrier||""}</td>
+      <td>${t.loadType||""}</td>
+      <td>${t.pickupDate||""}</td>
+      <td>${t.pickupWindow||""}</td>
+      <td>${t.cartons||0}</td>
+      <td>${t.status||""}</td>
     `;
     tb.appendChild(tr);
   });
@@ -1007,7 +1106,7 @@ if ($("cal-next")) $("cal-next").onclick=()=>{ const v=$("cal-view").value; calA
 if ($("cal-view")) $("cal-view").onchange=renderCalendar;
 if ($("cal-filter")) $("cal-filter").oninput=renderCalendar;
 
-// ========= SETTINGS: Clear Saved Data =========
+// ========= SETTINGS EXTRAS: Clear Saved Data =========
 (function injectClearButton(){
   const settings = document.querySelector("#tab-settings .pane-header");
   if(!settings || document.getElementById("clear-saved-btn")) return;
@@ -1034,10 +1133,15 @@ function sweepHistoryIfMidnight(){
 }
 setInterval(sweepHistoryIfMidnight, 60*1000);
 
-// ========= RENDER ALL =========
+// ========= RENDER ALL + BOOTSTRAP =========
 function renderAll(){ renderOrders(true); renderTruckloads(); renderDock(); renderTodays(); renderHistory(); renderMetrics(); }
+
 loadStateSync();
 appState.orders = (appState.orders||[]).map(o => o.__shipBy ? o : computeOrderDerived(o));
+if(appState.session?.authed){
+  $("login-screen").classList.add("hidden");
+  $("app-shell").classList.remove("hidden");
+}
 renderAll();
 loadStateAsync();
 sweepHistoryIfMidnight();
