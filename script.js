@@ -12,11 +12,31 @@ const appState = {
   truckloads: [],
   history: [],
   team: [
-    { id: crypto.randomUUID(), name: "Router 1", email: "router@example.com", role: "router", shift: "1st", active: true, theme: "light", lang: "en" },
-    { id: crypto.randomUUID(), name: "Dock Lead", email: "dock@example.com", role: "dock", shift: "1st", active: true, theme: "light", lang: "en" }
+    {
+      id: crypto.randomUUID(),
+      name: "Router 1",
+      email: "router@example.com",
+      role: "router",
+      shift: "1st",
+      active: true,
+      theme: "light",
+      lang: "en"
+    },
+    {
+      id: crypto.randomUUID(),
+      name: "Dock Lead",
+      email: "dock@example.com",
+      role: "dock",
+      shift: "1st",
+      active: true,
+      theme: "light",
+      lang: "en"
+    }
   ],
   settings: {
-    maxLTL: 4, maxTL: 3, maxFloor: 2,
+    maxLTL: 4,
+    maxTL: 3,
+    maxFloor: 2,
     blocks: [
       { window: "08:00am-10:00am", max: { LTL: 4, Truckload: 2, Floorload: 1 } },
       { window: "10:00am-12:00pm", max: { LTL: 4, Truckload: 2, Floorload: 1 } },
@@ -29,89 +49,181 @@ const appState = {
 
 // ========= IndexedDB (fallback mirror) =========
 let _idb;
-async function idbOpen(){
-  return new Promise((res,rej)=>{
+
+async function idbOpen() {
+  return new Promise((res, rej) => {
     const r = indexedDB.open("ncdcDB", 1);
-    r.onupgradeneeded = ()=> r.result.createObjectStore("state");
-    r.onsuccess = ()=> res(r.result);
-    r.onerror = ()=> rej(r.error);
+    r.onupgradeneeded = () => r.result.createObjectStore("state");
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
   });
 }
-async function idbGet(key){
-  try{
-    _idb = _idb||await idbOpen();
-    return await new Promise((res,rej)=>{
-      const tx=_idb.transaction("state","readonly").objectStore("state").get(key);
-      tx.onsuccess=()=>res(tx.result); tx.onerror=()=>rej(tx.error);
+
+async function idbGet(key) {
+  try {
+    _idb = _idb || (await idbOpen());
+    return await new Promise((res, rej) => {
+      const tx = _idb
+        .transaction("state", "readonly")
+        .objectStore("state")
+        .get(key);
+      tx.onsuccess = () => res(tx.result);
+      tx.onerror = () => rej(tx.error);
     });
-  }catch{ return null; }
+  } catch {
+    return null;
+  }
 }
-async function idbSet(key,val){
-  try{
-    _idb = _idb||await idbOpen();
-    return await new Promise((res,rej)=>{
-      const tx=_idb.transaction("state","readwrite").objectStore("state").put(val,key);
-      tx.onsuccess=()=>res(true); tx.onerror=()=>rej(tx.error);
+
+async function idbSet(key, val) {
+  try {
+    _idb = _idb || (await idbOpen());
+    return await new Promise((res, rej) => {
+      const tx = _idb
+        .transaction("state", "readwrite")
+        .objectStore("state")
+        .put(val, key);
+      tx.onsuccess = () => res(true);
+      tx.onerror = () => rej(tx.error);
     });
-  }catch{ return false; }
+  } catch {
+    return false;
+  }
 }
 
 // ========= UTILS =========
-const $ = id => document.getElementById(id);
-const todayYMD = () => new Date().toISOString().slice(0,10);
-function loadStateSync(){ try{ Object.assign(appState, JSON.parse(localStorage.getItem(STORAGE_KEY)||"{}")); }catch{} }
-async function loadStateAsync(){ const s = await idbGet(STORAGE_KEY); if(s){ Object.assign(appState, s); renderAll(); } }
-function saveState(){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(appState)); idbSet(STORAGE_KEY, appState); }catch{} }
-function mostCommon(a){const c={};let m="",n=0;for(const v of a){const k=v||"";c[k]=(c[k]||0)+1;if(c[k]>n){n=c[k];m=k}}return m;}
-function sumNumber(rows, col){return rows.reduce((s,x)=>s+(+((x[col]||"").replace(/,/g,""))||0),0);}
-function earliestDate(a){
-  const d=a.map(x=>x&&new Date(x)).filter(x=>x&&x>0);
-  if(!d.length)return"";
-  d.sort((a,b)=>a-b);
-  return d[0].toISOString().slice(0,10);
+const $ = (id) => document.getElementById(id);
+const todayYMD = () => new Date().toISOString().slice(0, 10);
+
+function loadStateSync() {
+  try {
+    Object.assign(appState, JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"));
+  } catch {}
 }
-function sameDate(a,b){
-  const x=new Date(a),y=new Date(b);
-  x.setHours(0,0,0,0);y.setHours(0,0,0,0);
-  return x.getTime()===y.getTime();
+
+async function loadStateAsync() {
+  const s = await idbGet(STORAGE_KEY);
+  if (s) {
+    Object.assign(appState, s);
+    renderAll();
+  }
 }
-function ymd(d){return new Date(d).toISOString().slice(0,10);}
-function parseYMD(str){ if(!str) return null; const d=new Date(str); return isNaN(d)?null:d; }
-function addDays(d, n){ const x=new Date(d); x.setDate(x.getDate()+n); return x; }
-function clampDateToCancel(reco, cancel){ if(!cancel) return reco; const rc=new Date(reco), cc=new Date(cancel); return rc>cc?cc:rc; }
+
+function saveState() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
+    idbSet(STORAGE_KEY, appState);
+  } catch {}
+}
+
+function mostCommon(a) {
+  const c = {};
+  let m = "";
+  let n = 0;
+  for (const v of a) {
+    const k = v || "";
+    c[k] = (c[k] || 0) + 1;
+    if (c[k] > n) {
+      n = c[k];
+      m = k;
+    }
+  }
+  return m;
+}
+
+function sumNumber(rows, col) {
+  return rows.reduce(
+    (s, x) => s + (+((x[col] || "").replace(/,/g, "")) || 0),
+    0
+  );
+}
+
+function earliestDate(a) {
+  const d = a
+    .map((x) => x && new Date(x))
+    .filter((x) => x && x > 0);
+  if (!d.length) return "";
+  d.sort((a, b) => a - b);
+  return d[0].toISOString().slice(0, 10);
+}
+
+function sameDate(a, b) {
+  const x = new Date(a);
+  const y = new Date(b);
+  x.setHours(0, 0, 0, 0);
+  y.setHours(0, 0, 0, 0);
+  return x.getTime() === y.getTime();
+}
+
+function ymd(d) {
+  return new Date(d).toISOString().slice(0, 10);
+}
+
+function parseYMD(str) {
+  if (!str) return null;
+  const d = new Date(str);
+  return isNaN(d) ? null : d;
+}
+
+function addDays(d, n) {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+}
+
+function clampDateToCancel(reco, cancel) {
+  if (!cancel) return reco;
+  const rc = new Date(reco);
+  const cc = new Date(cancel);
+  return rc > cc ? cc : rc;
+}
 
 // ========= LOGIN / NAV (persistent) =========
-if ($("login-btn")) $("login-btn").onclick = () => {
-  const email = $("login-email").value.trim();
-  const pass = $("login-password").value.trim();
-  const ok = email==="htellez032003@gmail.com" && pass==="Ltapaprel040523";
-  if (ok){
-    appState.session = { authed:true, email };
-    $("login-error").classList.add("hidden");
-    $("login-screen").classList.add("hidden");
-    $("app-shell").classList.remove("hidden");
-    saveState();
-  } else {
-    $("login-error").classList.remove("hidden");
-  }
-};
-if ($("logout-btn")) $("logout-btn").onclick = () => {
-  appState.session = { authed:false, email:"" };
-  saveState();
-  $("app-shell").classList.add("hidden");
-  $("login-screen").classList.remove("hidden");
-};
+if ($("login-btn"))
+  $("login-btn").onclick = () => {
+    const email = $("login-email").value.trim();
+    const pass = $("login-password").value.trim();
+    const ok =
+      email === "htellez032003@gmail.com" &&
+      pass === "Ltapaprel040523";
 
-document.querySelectorAll(".nav-link").forEach(b => b.onclick = () => {
-  document.querySelectorAll(".nav-link").forEach(x => x.classList.remove("active"));
-  b.classList.add("active");
-  const tab = b.dataset.tab;
-  document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("hidden", p.id !== "tab-"+tab));
-  if (tab==="calendar") renderCalendar();
+    if (ok) {
+      appState.session = { authed: true, email };
+      $("login-error").classList.add("hidden");
+      $("login-screen").classList.add("hidden");
+      $("app-shell").classList.remove("hidden");
+      saveState();
+    } else {
+      $("login-error").classList.remove("hidden");
+    }
+  };
+
+if ($("logout-btn"))
+  $("logout-btn").onclick = () => {
+    appState.session = { authed: false, email: "" };
+    saveState();
+    $("app-shell").classList.add("hidden");
+    $("login-screen").classList.remove("hidden");
+  };
+
+document.querySelectorAll(".nav-link").forEach((b) => {
+  b.onclick = () => {
+    document
+      .querySelectorAll(".nav-link")
+      .forEach((x) => x.classList.remove("active"));
+    b.classList.add("active");
+    const tab = b.dataset.tab;
+    document
+      .querySelectorAll(".tab-panel")
+      .forEach((p) =>
+        p.classList.toggle("hidden", p.id !== "tab-" + tab)
+      );
+    if (tab === "calendar") renderCalendar();
+  };
 });
 
 // ========= SUGGESTION MODAL =========
-(function ensureSuggestionModal(){
+(function ensureSuggestionModal() {
   if (document.getElementById("suggest-overlay")) return;
   const wrap = document.createElement("div");
   wrap.id = "suggest-overlay";
@@ -130,11 +242,12 @@ document.querySelectorAll(".nav-link").forEach(b => b.onclick = () => {
       </div>
     </div>`;
   document.body.appendChild(wrap);
-  $("suggest-close").onclick = ()=> $("suggest-overlay").classList.add("hidden");
+  $("suggest-close").onclick = () =>
+    $("suggest-overlay").classList.add("hidden");
 })();
 
 // ========= SMART ROUTER MODAL =========
-(function ensureAutoRouterModal(){
+(function ensureAutoRouterModal() {
   if (document.getElementById("auto-overlay")) return;
   const wrap = document.createElement("div");
   wrap.id = "auto-overlay";
@@ -159,13 +272,14 @@ document.querySelectorAll(".nav-link").forEach(b => b.onclick = () => {
       </div>
     </div>`;
   document.body.appendChild(wrap);
-  $("auto-cancel").onclick = ()=> $("auto-overlay").classList.add("hidden");
+  $("auto-cancel").onclick = () =>
+    $("auto-overlay").classList.add("hidden");
 })();
 
 // Add "Auto-Route Orders" button in Orders toolbar
-(function injectAutoButton(){
+(function injectAutoButton() {
   const bar = document.querySelector(".orders-toolbar .selected-box");
-  if(!bar || document.getElementById("auto-route-btn")) return;
+  if (!bar || document.getElementById("auto-route-btn")) return;
   const btn = document.createElement("button");
   btn.id = "auto-route-btn";
   btn.className = "btn tiny";
@@ -175,121 +289,210 @@ document.querySelectorAll(".nav-link").forEach(b => b.onclick = () => {
 })();
 
 // ========= CSV UPLOAD (MERGE, not wipe) =========
-if ($("orders-csv")) $("orders-csv").addEventListener("change", e => {
-  const f = e.target.files[0]; if(!f) return;
-  const r = new FileReader();
-  r.onload = ev => {
-    const text = ev.target.result;
-    const incoming = parseCSVRobust(text).map(o => computeOrderDerived(o));
-    mergeOrders(incoming);
-    buildTruckloadsFromOrders();
-    hydrateFilterColumnDropdown();
-    $("csv-updated").textContent = "CSV updated: " + new Date().toLocaleString();
-    renderAll(); saveState();
-  };
-  r.readAsText(f);
-});
+if ($("orders-csv"))
+  $("orders-csv").addEventListener("change", (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = (ev) => {
+      const text = ev.target.result;
+      const incoming = parseCSVRobust(text).map((o) =>
+        computeOrderDerived(o)
+      );
+      mergeOrders(incoming);
+      buildTruckloadsFromOrders(); // preserves manual loads
+      hydrateFilterColumnDropdown();
+      $("csv-updated").textContent =
+        "CSV updated: " + new Date().toLocaleString();
+      renderAll();
+      saveState();
+    };
+    r.readAsText(f);
+  });
 
 // RFC4180-ish CSV
-function parseCSVRobust(text){
-  const rows=[]; let row=[], val="", q=false;
-  for(let i=0;i<text.length;i++){
-    const ch=text[i];
-    if(ch==='\"'){ if(q && text[i+1]==='\"'){ val+='\"'; i++; } else { q=!q; } }
-    else if(ch===',' && !q){ row.push(val); val=""; }
-    else if((ch==='\n'||ch==='\r') && !q){
-      if(val.length||row.length){ row.push(val); rows.push(row); row=[]; val=""; }
-      if(ch==='\r' && text[i+1]==='\n') i++;
+function parseCSVRobust(text) {
+  const rows = [];
+  let row = [],
+    val = "",
+    q = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      if (q && text[i + 1] === '"') {
+        val += '"';
+        i++;
+      } else {
+        q = !q;
+      }
+    } else if (ch === "," && !q) {
+      row.push(val);
+      val = "";
+    } else if ((ch === "\n" || ch === "\r") && !q) {
+      if (val.length || row.length) {
+        row.push(val);
+        rows.push(row);
+        row = [];
+        val = "";
+      }
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+    } else {
+      val += ch;
     }
-    else val+=ch;
   }
-  if(val.length||row.length){ row.push(val); rows.push(row); }
-  const header = rows.shift().map(h=>h.trim());
-  return rows.filter(r=>r.some(c=>String(c).trim()!=="")).map(r=>{
-    const o={}; header.forEach((h,i)=>o[h]= (r[i]??"").trim()); return o;
-  });
+  if (val.length || row.length) {
+    row.push(val);
+    rows.push(row);
+  }
+
+  const header = rows.shift().map((h) => h.trim());
+  return rows
+    .filter((r) => r.some((c) => String(c).trim() !== ""))
+    .map((r) => {
+      const o = {};
+      header.forEach((h, i) => (o[h] = (r[i] ?? "").trim()));
+      return o;
+    });
 }
 
 // ========= PERSISTENT ORDERS MERGE =========
-function mergeOrders(newRows){
-  const keyFor = o => (o["PO Num"]||"").trim() ||
-                      ((o["BOL#"]||"").trim()+"|"+(o["Cust Name"]||"").trim()+"|"+(o["TTL QTY"]||"").trim());
-  const map = new Map(appState.orders.map(o=>[keyFor(o), o]));
-  for(const nr of newRows){
+function mergeOrders(newRows) {
+  const keyFor = (o) =>
+    (o["PO Num"] || "").trim() ||
+    ((o["BOL#"] || "").trim() +
+      "|" +
+      (o["Cust Name"] || "").trim() +
+      "|" +
+      (o["TTL QTY"] || "").trim());
+
+  const map = new Map(appState.orders.map((o) => [keyFor(o), o]));
+
+  for (const nr of newRows) {
     const k = keyFor(nr);
-    if(map.has(k)){
+    if (map.has(k)) {
       const cur = map.get(k);
-      const kept = { Router: cur.Router, "Scheduled Date": cur["Scheduled Date"], "Author#": cur["Author#"], "PT STATUS": cur["PT STATUS"] };
+      const kept = {
+        Router: cur.Router,
+        "Scheduled Date": cur["Scheduled Date"],
+        Author: cur["Author#"],
+        "PT STATUS": cur["PT STATUS"]
+      };
       const merged = { ...cur, ...nr, ...kept };
       map.set(k, computeOrderDerived(merged));
     } else {
       map.set(k, computeOrderDerived(nr));
     }
   }
+
   appState.orders = [...map.values()];
 }
 
 // ========= DERIVED ORDER LOGIC =========
-function computeOrderDerived(o){
-  const nUnits = +String(o["TTL QTY"]||0).toString().replace(/,/g,"") || 0;
-  const nCarts = +String(o["Est. Cartons"]||0).toString().replace(/,/g,"") || 0;
+function computeOrderDerived(o) {
+  const nUnits =
+    +String(o["TTL QTY"] || 0)
+      .toString()
+      .replace(/,/g, "") || 0;
+  const nCarts =
+    +String(o["Est. Cartons"] || 0)
+      .toString()
+      .replace(/,/g, "") || 0;
+
   o.__units = nUnits;
   o.__cartons = nCarts;
 
   const pickProc = parseYMD(o["Pick Proc Date"]);
-  const startD   = parseYMD(o["Start Date"]);
-  const cancelD  = parseYMD(o["Cancel Date"]);
+  const startD = parseYMD(o["Start Date"]);
+  const cancelD = parseYMD(o["Cancel Date"]);
 
   let shipBy;
-  if (pickProc && startD && pickProc > startD) shipBy = addDays(pickProc, 3);
-  else if (startD && cancelD) shipBy = startD < cancelD ? startD : cancelD;
-  else shipBy = startD || cancelD || pickProc || new Date();
+  if (pickProc && startD && pickProc > startD) {
+    shipBy = addDays(pickProc, 3);
+  } else if (startD && cancelD) {
+    shipBy = startD < cancelD ? startD : cancelD;
+  } else {
+    shipBy = startD || cancelD || pickProc || new Date();
+  }
 
   o.__shipBy = ymd(shipBy);
-  o.__recommendedShip = cancelD ? ymd(clampDateToCancel(shipBy, cancelD)) : o.__shipBy;
+  o.__recommendedShip = cancelD
+    ? ymd(clampDateToCancel(shipBy, cancelD))
+    : o.__shipBy;
 
   const t = new Date(todayYMD());
   const sb = parseYMD(o.__shipBy);
-  o.__priority = (sb <= t) ? "HIGH" : (sb <= addDays(t,1)) ? "MEDIUM" : "LOW";
+  o.__priority =
+    sb <= t
+      ? "HIGH"
+      : sb <= addDays(t, 1)
+      ? "MEDIUM"
+      : "LOW";
 
   return o;
 }
 
-// ========= GROUPING / BUILD LOADS (baseline) =========
-function buildTruckloadsFromOrders(){
-  const manual = appState.truckloads.filter(t=>!t.autoGenerated);
+// ========= GROUPING / BUILD LOADS (baseline, manual preserved) =========
+function buildTruckloadsFromOrders() {
+  // Preserve manual loads only (NEVER touch them)
+  const manual = appState.truckloads.filter(
+    (t) => !t.autoGenerated
+  );
+
   const auto = [];
 
-  const withAuth = appState.orders.filter(o => (o["Author#"]||"").trim());
+  // Author-based TLs
+  const withAuth = appState.orders.filter(
+    (o) => (o["Author#"] || "").trim()
+  );
   const byAuth = new Map();
-  withAuth.forEach(o => {
+  withAuth.forEach((o) => {
     const k = o["Author#"].trim();
-    if(!byAuth.has(k)) byAuth.set(k, []);
+    if (!byAuth.has(k)) byAuth.set(k, []);
     byAuth.get(k).push(o);
   });
-  for(const [loadId, rows] of byAuth){
-    auto.push(buildLoadFromRows({ loadId, rows, loadTypeHint: "Truckload" }));
+  for (const [loadId, rows] of byAuth) {
+    auto.push(
+      buildLoadFromRows({
+        loadId,
+        rows,
+        loadTypeHint: "Truckload"
+      })
+    );
   }
 
-  const noAuth = appState.orders.filter(o => !(o["Author#"]||"").trim());
+  // LTL auto grouping for orders without Author#
+  const noAuth = appState.orders.filter(
+    (o) => !(o["Author#"] || "").trim()
+  );
   const byLTL = new Map();
-  noAuth.forEach(o=>{
-    const k = (o["Shipper"]||"").trim()+"||"+(o["Ready Date"]||"").trim();
-    if(!byLTL.has(k)) byLTL.set(k,[]);
+  noAuth.forEach((o) => {
+    const k =
+      (o["Shipper"] || "").trim() +
+      "||" +
+      (o["Ready Date"] || "").trim();
+    if (!byLTL.has(k)) byLTL.set(k, []);
     byLTL.get(k).push(o);
   });
-  for(const [k, rows] of byLTL){
-    auto.push(buildLoadFromRows({ loadId: "LTL-"+k, rows, loadTypeHint: "LTL" }));
+  for (const [k, rows] of byLTL) {
+    auto.push(
+      buildLoadFromRows({
+        loadId: "LTL-" + k,
+        rows,
+        loadTypeHint: "LTL"
+      })
+    );
   }
 
+  // Manual loads preserved, auto rebuilt
   appState.truckloads = [...manual, ...auto];
 }
 
-function buildLoadFromRows({loadId, rows, loadTypeHint}){
-  const customer = mostCommon(rows.map(r=>r["Cust Name"]||""));
-  const carrier = mostCommon(rows.map(r=>r["Shipper"]||""));
-  const pickupDate = earliestDate(rows.map(r=>r["Ready Date"]||""));
-  const bolCommon = mostCommon(rows.map(r=>r["BOL#"]||""));
+function buildLoadFromRows({ loadId, rows, loadTypeHint }) {
+  const customer = mostCommon(rows.map((r) => r["Cust Name"] || ""));
+  const carrier = mostCommon(rows.map((r) => r["Shipper"] || ""));
+  const pickupDate = earliestDate(rows.map((r) => r["Ready Date"] || ""));
+  const bolCommon = mostCommon(rows.map((r) => r["BOL#"] || ""));
   const cartons = sumNumber(rows, "Est. Cartons");
   const pallets = sumNumber(rows, "Est. Pallet");
   const weight = sumNumber(rows, "Total Weight");
@@ -297,38 +500,58 @@ function buildLoadFromRows({loadId, rows, loadTypeHint}){
   const masterGroups = buildMasterGroups(rows);
 
   return {
-    loadId, autoGenerated: true,
+    loadId,
+    autoGenerated: true,
     loadType: loadTypeHint || "Truckload",
-    customer, carrier,
-    pickupDate, pickupWindow: "",
-    bol: bolCommon, cartons, pallets, weight, cube,
-    stagedLocation: "", assignedTo: [], actualPallets: 0, loadedBy: [],
-    status: "Unstaged", departed: false, masterGroups
+    customer,
+    carrier,
+    pickupDate,
+    pickupWindow: "",
+    bol: bolCommon,
+    cartons,
+    pallets,
+    weight,
+    cube,
+    stagedLocation: "",
+    assignedTo: [],
+    actualPallets: 0,
+    loadedBy: [],
+    status: "Unstaged",
+    departed: false,
+    masterGroups
   };
 }
 
-function buildMasterGroups(rows){
+function buildMasterGroups(rows) {
   const byM = new Map();
-  rows.forEach(r=>{
-    const m = (r["Master BOL#"]||"").trim();
-    if(!byM.has(m)) byM.set(m,[]);
+  rows.forEach((r) => {
+    const m = (r["Master BOL#"] || "").trim();
+    if (!byM.has(m)) byM.set(m, []);
     byM.get(m).push(r);
   });
-  const groups=[];
-  for(const [m, rs] of byM){
+
+  const groups = [];
+  for (const [m, rs] of byM) {
     const byB = new Map();
-    rs.forEach(r=>{
-      const b = (r["BOL#"]||"").trim();
-      if(!byB.has(b)) byB.set(b,[]);
+    rs.forEach((r) => {
+      const b = (r["BOL#"] || "").trim();
+      if (!byB.has(b)) byB.set(b, []);
       byB.get(b).push(r);
     });
-    const bols=[];
-    for(const [b, bs] of byB){
+
+    const bols = [];
+    for (const [b, bs] of byB) {
       bols.push({
         bol: b,
-        pos: bs.map(x=>({ po: x["PO Num"], customer: x["Cust Name"], cartons: +(x["Est. Cartons"]||0), pallets: +(x["Est. Pallet"]||0) }))
+        pos: bs.map((x) => ({
+          po: x["PO Num"],
+          customer: x["Cust Name"],
+          cartons: +(x["Est. Cartons"] || 0),
+          pallets: +(x["Est. Pallet"] || 0)
+        }))
       });
     }
+
     groups.push({ masterBol: m, bols });
   }
   return groups;
@@ -336,317 +559,544 @@ function buildMasterGroups(rows){
 
 // ========= FILTER UI (Orders) =========
 const dynamicFilters = [];
-function hydrateFilterColumnDropdown(){
+
+function hydrateFilterColumnDropdown() {
   const sel = $("orders-col-filter");
-  if(!sel) return;
-  const headers = Array.from(document.querySelectorAll("#orders-head th")).map(th=>th.textContent.trim()).slice(1);
-  sel.innerHTML = headers.map(h=>`<option value="${h}">${h}</option>`).join("");
+  if (!sel) return;
+  const headers = Array.from(
+    document.querySelectorAll("#orders-head th")
+  )
+    .map((th) => th.textContent.trim())
+    .slice(1);
+  sel.innerHTML = headers
+    .map((h) => `<option value="${h}">${h}</option>`)
+    .join("");
 }
-if ($("add-col-filter")) $("add-col-filter").onclick = () => {
-  const col = $("orders-col-filter").value;
-  const val = $("orders-col-value").value.trim();
-  if(!col || !val) return;
-  dynamicFilters.push({col, value: val});
-  $("orders-col-value").value="";
-  renderActiveFilters(); renderOrders();
-};
-if ($("clear-filters")) $("clear-filters").onclick = () => {
-  dynamicFilters.length=0;
-  $("orders-search").value="";
-  renderActiveFilters(); renderOrders(true);
-};
-function renderActiveFilters(){
-  const box = $("active-filters"); if(!box) return;
-  box.innerHTML = dynamicFilters.map((f,i)=>`<span class="chip">${f.col} = "${f.value}" <button data-del="${i}" class="chip-x">×</button></span>`).join("");
-  box.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{ dynamicFilters.splice(+b.dataset.del,1); renderActiveFilters(); renderOrders(); });
+
+if ($("add-col-filter"))
+  $("add-col-filter").onclick = () => {
+    const col = $("orders-col-filter").value;
+    const val = $("orders-col-value").value.trim();
+    if (!col || !val) return;
+    dynamicFilters.push({ col, value: val });
+    $("orders-col-value").value = "";
+    renderActiveFilters();
+    renderOrders();
+  };
+
+if ($("clear-filters"))
+  $("clear-filters").onclick = () => {
+    dynamicFilters.length = 0;
+    $("orders-search").value = "";
+    renderActiveFilters();
+    renderOrders(true);
+  };
+
+function renderActiveFilters() {
+  const box = $("active-filters");
+  if (!box) return;
+  box.innerHTML = dynamicFilters
+    .map(
+      (f, i) =>
+        `<span class="chip">${f.col} = "${f.value}" <button data-del="${i}" class="chip-x">×</button></span>`
+    )
+    .join("");
+  box
+    .querySelectorAll("[data-del]")
+    .forEach(
+      (b) =>
+        (b.onclick = () => {
+          dynamicFilters.splice(+b.dataset.del, 1);
+          renderActiveFilters();
+          renderOrders();
+        })
+    );
 }
 
 // ========= ORDERS RENDER =========
 let filteredOrders = [];
 const selectedPOs = new Set();
 
-function renderOrders(reset=false){
-  if(reset) filteredOrders = appState.orders.slice();
-  const tb = $("orders-body"); if(!tb) return;
-  const q = ($("orders-search")?.value||"").toLowerCase();
+function renderOrders(reset = false) {
+  if (reset) filteredOrders = appState.orders.slice();
+  const tb = $("orders-body");
+  if (!tb) return;
 
-  filteredOrders = appState.orders.filter(o=>{
-    const quick = Object.values(o).some(v => String(v||"").toLowerCase().includes(q));
-    if(!quick) return false;
-    for(const f of dynamicFilters){ if(String(o[f.col]||"") !== f.value) return false; }
+  const q = ($("orders-search")?.value || "").toLowerCase();
+
+  filteredOrders = appState.orders.filter((o) => {
+    const quick = Object.values(o).some((v) =>
+      String(v || "").toLowerCase().includes(q)
+    );
+    if (!quick) return false;
+    for (const f of dynamicFilters) {
+      if (String(o[f.col] || "") !== f.value) return false;
+    }
     return true;
   });
 
-  tb.innerHTML="";
-  filteredOrders.forEach(o=>{
-    const po = o["PO Num"]||"";
+  tb.innerHTML = "";
+  filteredOrders.forEach((o) => {
+    const po = o["PO Num"] || "";
     const tr = document.createElement("tr");
-    const dueClass = o.__priority==="HIGH" ? "row-danger" : o.__priority==="MEDIUM" ? "row-warn" : "";
+    const dueClass =
+      o.__priority === "HIGH"
+        ? "row-danger"
+        : o.__priority === "MEDIUM"
+        ? "row-warn"
+        : "";
     tr.className = dueClass;
     tr.innerHTML = `
-      <td><input type="checkbox" class="po-check" data-po="${po}" ${selectedPOs.has(po)?"checked":""}></td>
-      <td>${o["Division"]||""}</td><td>${o["BOL#"]||""}</td><td>${o["Master BOL#"]||""}</td>
-      <td>${po}</td><td>${o["Customer"]||""}</td><td>${o["Cust Name"]||""}</td><td>${o["Shipper"]||""}</td>
-      <td>${o["TTL QTY"]||""}</td><td>${o["TTL Amt"]||""}</td>
-      <td>${o["Total Weight"]||""}</td><td>${o["Total Cubic"]||""}</td>
-      <td>${o["Est. Cartons"]||""}</td><td>${o["Est. Pallet"]||""}</td>
-      <td>${o["Pick Proc Date"]||""}</td><td>${o["Start Date"]||""}</td><td>${o["Cancel Date"]||""}</td>
-      <td>${o["Router"]||""}</td><td>${o["Route Date"]||""}</td><td>${o["Scheduled Date"]||""}</td>
-      <td>${o["Ready Date"]||""}</td><td>${o["Author#"]||""}</td><td>${o["PT STATUS"]||""}</td><td></td>
+      <td><input type="checkbox" class="po-check" data-po="${po}" ${
+      selectedPOs.has(po) ? "checked" : ""
+    }></td>
+      <td>${o["Division"] || ""}</td>
+      <td>${o["BOL#"] || ""}</td>
+      <td>${o["Master BOL#"] || ""}</td>
+      <td>${po}</td>
+      <td>${o["Customer"] || ""}</td>
+      <td>${o["Cust Name"] || ""}</td>
+      <td>${o["Shipper"] || ""}</td>
+      <td>${o["TTL QTY"] || ""}</td>
+      <td>${o["TTL Amt"] || ""}</td>
+      <td>${o["Total Weight"] || ""}</td>
+      <td>${o["Total Cubic"] || ""}</td>
+      <td>${o["Est. Cartons"] || ""}</td>
+      <td>${o["Est. Pallet"] || ""}</td>
+      <td>${o["Pick Proc Date"] || ""}</td>
+      <td>${o["Start Date"] || ""}</td>
+      <td>${o["Cancel Date"] || ""}</td>
+      <td>${o["Router"] || ""}</td>
+      <td>${o["Route Date"] || ""}</td>
+      <td>${o["Scheduled Date"] || ""}</td>
+      <td>${o["Ready Date"] || ""}</td>
+      <td>${o["Author#"] || ""}</td>
+      <td>${o["PT STATUS"] || ""}</td>
+      <td></td>
     `;
     tr.title = `Ship By: ${o.__shipBy} • Recommended: ${o.__recommendedShip} • Priority: ${o.__priority}`;
     tb.appendChild(tr);
   });
 
-  document.querySelectorAll(".po-check").forEach(chk=>{
-    chk.onchange = e => {
+  document.querySelectorAll(".po-check").forEach((chk) => {
+    chk.onchange = (e) => {
       const po = e.target.dataset.po;
-      if(e.target.checked) selectedPOs.add(po); else selectedPOs.delete(po);
+      if (e.target.checked) selectedPOs.add(po);
+      else selectedPOs.delete(po);
       $("selected-count").textContent = selectedPOs.size;
       saveState();
     };
   });
+
   $("selected-count").textContent = selectedPOs.size;
 
   const sel = $("assign-existing-load");
-  if (sel){
-    sel.innerHTML = `<option value="">Assign to existing load...</option>` +
-      appState.truckloads.map(t=>`<option value="${t.loadId}">${t.loadId} — ${t.customer||""}</option>`).join("");
+  if (sel) {
+    sel.innerHTML =
+      `<option value="">Assign to existing load...</option>` +
+      appState.truckloads
+        .map(
+          (t) =>
+            `<option value="${t.loadId}">${t.loadId} — ${t.customer || ""}</option>`
+        )
+        .join("");
   }
 }
-if ($("orders-search")) $("orders-search").oninput = () => renderOrders();
+
+if ($("orders-search"))
+  $("orders-search").oninput = () => renderOrders();
 
 // select-all
-if ($("select-all-orders")) $("select-all-orders").onchange = e => {
-  const checked = e.target.checked;
-  document.querySelectorAll("#orders-body .po-check").forEach(chk=>{
-    chk.checked = checked;
-    const po = chk.dataset.po;
-    if (checked) selectedPOs.add(po); else selectedPOs.delete(po);
-  });
-  $("selected-count").textContent = selectedPOs.size;
-  saveState();
-};
+if ($("select-all-orders"))
+  $("select-all-orders").onchange = (e) => {
+    const checked = e.target.checked;
+    document
+      .querySelectorAll("#orders-body .po-check")
+      .forEach((chk) => {
+        chk.checked = checked;
+        const po = chk.dataset.po;
+        if (checked) selectedPOs.add(po);
+        else selectedPOs.delete(po);
+      });
+    $("selected-count").textContent = selectedPOs.size;
+    saveState();
+  };
 
 // ========= CAPACITY + SLOTS HELPERS =========
-function capacityCheck(load, rows){
-  const unitsNow = rows.reduce((s,r)=> s + (r.__units||0), 0);
-  const cartsNow = rows.reduce((s,r)=> s + (r.__cartons||0), 0);
-  const loadUnits = 0;
+function capacityCheck(load, rows) {
+  const unitsNow = rows.reduce((s, r) => s + (r.__units || 0), 0);
+  const cartsNow = rows.reduce((s, r) => s + (r.__cartons || 0), 0);
+  const loadUnits = 0; // historical unknown
   const loadCarts = +load.cartons || 0;
-  const unitsOK = (loadUnits + unitsNow) <= MAX_UNITS_PER_TRUCK;
-  const cartsOK = (loadCarts + cartsNow) <= MAX_CARTS_PER_TRUCK;
+  const unitsOK = loadUnits + unitsNow <= MAX_UNITS_PER_TRUCK;
+  const cartsOK = loadCarts + cartsNow <= MAX_CARTS_PER_TRUCK;
   return { unitsOK, cartsOK, unitsNow, cartsNow };
 }
-function getSlotLimit(window, loadType){
-  const block = appState.settings.blocks.find(b=>b.window===window);
-  if (block) return block.max[loadType] ?? (loadType==="LTL"?appState.settings.maxLTL:loadType==="Truckload"?appState.settings.maxTL:appState.settings.maxFloor);
-  return loadType==="LTL"?appState.settings.maxLTL:loadType==="Truckload"?appState.settings.maxTL:appState.settings.maxFloor;
+
+function getSlotLimit(window, loadType) {
+  const block = appState.settings.blocks.find((b) => b.window === window);
+  if (block)
+    return (
+      block.max[loadType] ??
+      (loadType === "LTL"
+        ? appState.settings.maxLTL
+        : loadType === "Truckload"
+        ? appState.settings.maxTL
+        : appState.settings.maxFloor)
+    );
+  return loadType === "LTL"
+    ? appState.settings.maxLTL
+    : loadType === "Truckload"
+    ? appState.settings.maxTL
+    : appState.settings.maxFloor;
 }
-function getSlotUsage(dateYMD, window, loadType){
-  return appState.truckloads.filter(l =>
-    l.pickupDate === dateYMD &&
-    l.loadType === loadType &&
-    ((l.pickupWindow||"").trim() || "(unspecified)") === (window||"(unspecified)")
+
+function getSlotUsage(dateYMD, window, loadType) {
+  return appState.truckloads.filter(
+    (l) =>
+      l.pickupDate === dateYMD &&
+      l.loadType === loadType &&
+      ((l.pickupWindow || "").trim() || "(unspecified)") ===
+        (window || "(unspecified)")
   ).length;
 }
-function buildMasterGroupsFromOrders(rows){ return buildMasterGroups(rows); }
+
+function buildMasterGroupsFromOrders(rows) {
+  return buildMasterGroups(rows);
+}
 
 // ========= MERGE INTO EXISTING LOAD =========
-function mergeRowsIntoLoad(t, rows){
+function mergeRowsIntoLoad(t, rows) {
   const merged = buildMasterGroupsFromOrders(rows);
-  merged.forEach(m=>{
-    let mg = t.masterGroups.find(x=>x.masterBol===m.masterBol);
-    if(!mg){ t.masterGroups.push(m); }
-    else {
-      m.bols.forEach(nb=>{
-        let b = mg.bols.find(x=>x.bol===nb.bol);
-        if(!b) mg.bols.push(nb);
+  merged.forEach((m) => {
+    let mg = t.masterGroups.find((x) => x.masterBol === m.masterBol);
+    if (!mg) {
+      t.masterGroups.push(m);
+    } else {
+      m.bols.forEach((nb) => {
+        let b = mg.bols.find((x) => x.bol === nb.bol);
+        if (!b) mg.bols.push(nb);
         else b.pos = [...b.pos, ...nb.pos];
       });
     }
   });
-  t.cartons += sumNumber(rows,"Est. Cartons");
-  t.pallets += sumNumber(rows,"Est. Pallet");
-  t.weight  += sumNumber(rows,"Total Weight");
-  t.cube    += sumNumber(rows,"Total Cubic");
+  t.cartons += sumNumber(rows, "Est. Cartons");
+  t.pallets += sumNumber(rows, "Est. Pallet");
+  t.weight += sumNumber(rows, "Total Weight");
+  t.cube += sumNumber(rows, "Total Cubic");
 }
 
 // ========= ASSIGNMENT with SAFETY NET =========
 let _suggestContext = null;
-function showSuggestionModal({reason, rows, targetLoad}){
+
+function showSuggestionModal({ reason, rows, targetLoad }) {
   const overlay = $("suggest-overlay");
   const msg = $("suggest-message");
   const exDiv = $("suggest-existing");
   const slotDiv = $("suggest-slots");
 
-  const commonCarrier = mostCommon(rows.map(r=>r["Shipper"]||""));
-  const recoDate = earliestDate(rows.map(r=>r.__recommendedShip));
-  const candidates = appState.truckloads.map(t=>{
-    const cap = capacityCheck(t, rows);
-    const score = (t.carrier===commonCarrier?1:0) + (t.pickupDate===recoDate?2:0) + ((cap.unitsOK&&cap.cartsOK)?2:-5);
-    return { load:t, cap, score };
-  }).sort((a,b)=>b.score-a.score).filter(c=>c.cap.unitsOK && c.cap.cartsOK).slice(0,3);
+  const commonCarrier = mostCommon(rows.map((r) => r["Shipper"] || ""));
+  const recoDate = earliestDate(rows.map((r) => r.__recommendedShip));
+  const candidates = appState.truckloads
+    .map((t) => {
+      const cap = capacityCheck(t, rows);
+      const score =
+        (t.carrier === commonCarrier ? 1 : 0) +
+        (t.pickupDate === recoDate ? 2 : 0) +
+        (cap.unitsOK && cap.cartsOK ? 2 : -5);
+      return { load: t, cap, score };
+    })
+    .sort((a, b) => b.score - a.score)
+    .filter((c) => c.cap.unitsOK && c.cap.cartsOK)
+    .slice(0, 3);
 
-  const unitsSel = rows.reduce((s,r)=>s+(r.__units||0),0);
-  const cartsSel = rows.reduce((s,r)=>s+(r.__cartons||0),0);
+  const unitsSel = rows.reduce((s, r) => s + (r.__units || 0), 0);
+  const cartsSel = rows.reduce((s, r) => s + (r.__cartons || 0), 0);
 
-  msg.textContent = `${reason} • Selected: ${unitsSel.toLocaleString()} units, ${cartsSel.toLocaleString()} cartons • Target date ${recoDate||"-"}`;
+  msg.textContent = `${reason} • Selected: ${unitsSel.toLocaleString()} units, ${cartsSel.toLocaleString()} cartons • Target date ${
+    recoDate || "-"
+  }`;
 
-  exDiv.innerHTML = candidates.length ? `
+  exDiv.innerHTML = candidates.length
+    ? `
       <h4>Top existing trucks</h4>
-      <table class="data-table"><thead><tr><th></th><th>Load ID</th><th>Date</th><th>Window</th><th>Carrier</th><th>Cartons Now</th></tr></thead>
-      <tbody>${candidates.map((c,i)=>`
-        <tr>
-          <td><input type="radio" name="recoLoad" value="${c.load.loadId}" ${i===0?"checked":""}></td>
-          <td>${c.load.loadId}</td><td>${c.load.pickupDate||""}</td><td>${c.load.pickupWindow||""}</td>
-          <td>${c.load.carrier||""}</td><td>${(c.load.cartons||0).toLocaleString()}</td>
-        </tr>`).join("")}</tbody></table>` : `<h4>No compatible existing trucks found.</h4>`;
+      <table class="data-table">
+        <thead>
+          <tr><th></th><th>Load ID</th><th>Date</th><th>Window</th><th>Carrier</th><th>Cartons Now</th></tr>
+        </thead>
+        <tbody>
+          ${candidates
+            .map(
+              (c, i) => `
+            <tr>
+              <td><input type="radio" name="recoLoad" value="${
+                c.load.loadId
+              }" ${i === 0 ? "checked" : ""}></td>
+              <td>${c.load.loadId}</td>
+              <td>${c.load.pickupDate || ""}</td>
+              <td>${c.load.pickupWindow || ""}</td>
+              <td>${c.load.carrier || ""}</td>
+              <td>${(c.load.cartons || 0).toLocaleString()}</td>
+            </tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>`
+    : `<h4>No compatible existing trucks found.</h4>`;
 
   const loadType = "Truckload";
-  const windows = appState.settings.blocks.length ? appState.settings.blocks.map(b=>b.window) : ["(unspecified)"];
-  slotDiv.innerHTML = windows.map(w=>{
-    const used = getSlotUsage(recoDate, w, loadType);
-    const lim = getSlotLimit(w, loadType);
-    const can = used < lim;
-    return `<label class="slot-pill ${can?"":"slot-full"}">
-      <input type="radio" name="slotPick" value="${w}" ${can && !candidates.length ? "checked":""} ${can?"":"disabled"}>
-      <span>${w}</span><span class="muted"> ${used}/${lim}</span></label>`;
-  }).join("");
+  const windows = appState.settings.blocks.length
+    ? appState.settings.blocks.map((b) => b.window)
+    : ["(unspecified)"];
 
-  _suggestContext = { rows, recoDate, loadType, targetLoadId: targetLoad?.loadId || null };
+  slotDiv.innerHTML = windows
+    .map((w) => {
+      const used = getSlotUsage(recoDate, w, loadType);
+      const lim = getSlotLimit(w, loadType);
+      const can = used < lim;
+      return `<label class="slot-pill ${can ? "" : "slot-full"}">
+        <input type="radio" name="slotPick" value="${w}" ${
+        can && !candidates.length ? "checked" : ""
+      } ${can ? "" : "disabled"}>
+        <span>${w}</span><span class="muted"> ${used}/${lim}</span>
+      </label>`;
+    })
+    .join("");
+
+  _suggestContext = {
+    rows,
+    recoDate,
+    loadType,
+    targetLoadId: targetLoad?.loadId || null
+  };
   overlay.classList.remove("hidden");
 }
-if ($("suggest-apply")) $("suggest-apply").onclick = () => {
-  if (!_suggestContext) { $("suggest-overlay").classList.add("hidden"); return; }
-  const rows = _suggestContext.rows;
-  const selectedExisting = document.querySelector("input[name='recoLoad']:checked");
-  if (selectedExisting){
-    const t = appState.truckloads.find(x=>x.loadId===selectedExisting.value);
-    if (t){
-      const cap = capacityCheck(t, rows);
-      if (!(cap.unitsOK && cap.cartsOK)){ alert("Selected truck no longer fits."); }
-      else { mergeRowsIntoLoad(t, rows); }
+
+if ($("suggest-apply"))
+  $("suggest-apply").onclick = () => {
+    if (!_suggestContext) {
+      $("suggest-overlay").classList.add("hidden");
+      return;
     }
+    const rows = _suggestContext.rows;
+    const selectedExisting = document.querySelector(
+      "input[name='recoLoad']:checked"
+    );
+
+    if (selectedExisting) {
+      const t = appState.truckloads.find(
+        (x) => x.loadId === selectedExisting.value
+      );
+      if (t) {
+        const cap = capacityCheck(t, rows);
+        if (!(cap.unitsOK && cap.cartsOK)) {
+          alert("Selected truck no longer fits.");
+        } else {
+          mergeRowsIntoLoad(t, rows);
+        }
+      }
+      $("suggest-overlay").classList.add("hidden");
+      renderAll();
+      saveState();
+      return;
+    }
+
+    const slot = document.querySelector("input[name='slotPick']:checked");
+    const pickWin = slot ? slot.value : "(unspecified)";
+    const id = "LOAD-" + (appState.truckloads.length + 1);
+    const base = buildLoadFromRows({
+      loadId: id,
+      rows,
+      loadTypeHint: "Truckload"
+    });
+
+    base.autoGenerated = false;
+    base.pickupDate = _suggestContext.recoDate || base.pickupDate;
+    base.pickupWindow = pickWin;
+    base.carrier =
+      mostCommon(rows.map((r) => r["Shipper"] || "")) || base.carrier;
+
+    appState.truckloads.push(base);
     $("suggest-overlay").classList.add("hidden");
-    renderAll(); saveState();
-    return;
-  }
-  const slot = document.querySelector("input[name='slotPick']:checked");
-  const pickWin = slot ? slot.value : "(unspecified)";
-  const id = "LOAD-"+(appState.truckloads.length+1);
-  const base = buildLoadFromRows({ loadId:id, rows, loadTypeHint:"Truckload" });
-  base.autoGenerated = false;
-  base.pickupDate = _suggestContext.recoDate || base.pickupDate;
-  base.pickupWindow = pickWin;
-  base.carrier = mostCommon(rows.map(r=>r["Shipper"]||"")) || base.carrier;
-  appState.truckloads.push(base);
-  $("suggest-overlay").classList.add("hidden");
-  renderAll(); saveState();
-};
+    renderAll();
+    saveState();
+  };
 
-// assign selected POs to an existing load
-if ($("assign-pos-to-load")) $("assign-pos-to-load").onclick = () => {
-  const id = $("assign-existing-load").value; if(!id || selectedPOs.size===0) return;
-  const t = appState.truckloads.find(x=>x.loadId===id); if(!t) return;
-  const rows = appState.orders.filter(o => selectedPOs.has(o["PO Num"]||""));
-  const cap = capacityCheck(t, rows);
-  const schedMismatch = false;
-  if (!cap.unitsOK || !cap.cartsOK || schedMismatch){
-    showSuggestionModal({
-      reason: !cap.cartsOK ? "Capacity exceeded for selected truck" : "Schedule conflict detected",
-      rows, targetLoad: t
-    });
-    return;
-  }
-  mergeRowsIntoLoad(t, rows);
-  renderAll(); saveState();
-};
+// Assign selected POs to an existing load
+if ($("assign-pos-to-load"))
+  $("assign-pos-to-load").onclick = () => {
+    const id = $("assign-existing-load").value;
+    if (!id || selectedPOs.size === 0) return;
+    const t = appState.truckloads.find((x) => x.loadId === id);
+    if (!t) return;
 
-// create truckload modal (prefill)
-if ($("create-truckload-btn")) $("create-truckload-btn").onclick = () => {
-  if (!selectedPOs.size){ alert("Select at least one PO."); return; }
-  $("modal-selected-pos").textContent = "POs: " + [...selectedPOs].join(", ");
-  const rows = appState.orders.filter(o => selectedPOs.has(o["PO Num"]||""));
-  const recoDate = earliestDate(rows.map(r=>r.__recommendedShip));
-  $("tl-load-id").value = "LOAD-"+(appState.truckloads.length+1);
-  $("tl-load-type").value = "Truckload";
-  $("tl-pickup-date").value = recoDate || "";
-  $("tl-pickup-window").value = "";
-  $("tl-carrier").value = mostCommon(rows.map(r=>r["Shipper"]||""));
-  $("tl-customer").value = mostCommon(rows.map(r=>r["Cust Name"]||""));
-  $("tl-bol").value = mostCommon(rows.map(r=>r["BOL#"]||""));
-  $("tl-cartons").value = rows.reduce((s,r)=>s+(r.__cartons||0),0);
-  $("tl-pallets").value = sumNumber(rows,"Est. Pallet");
-  $("modal-overlay").classList.remove("hidden");
-};
-if ($("tl-cancel")) $("tl-cancel").onclick = () => $("modal-overlay").classList.add("hidden");
-if ($("tl-save")) $("tl-save").onclick = () => {
-  const id = $("tl-load-id").value.trim() || "LOAD-"+(appState.truckloads.length+1);
-  const rows = appState.orders.filter(o => selectedPOs.has(o["PO Num"]||""));
-  const base = buildLoadFromRows({ loadId: id, rows, loadTypeHint: $("tl-load-type").value });
-  base.autoGenerated = false;
-  base.pickupDate = $("tl-pickup-date").value || base.pickupDate;
-  base.pickupWindow = $("tl-pickup-window").value.trim();
-  base.carrier = $("tl-carrier").value.trim() || base.carrier;
-  base.customer = $("tl-customer").value.trim() || base.customer;
-  base.bol = $("tl-bol").value.trim() || base.bol;
-  const used = getSlotUsage(base.pickupDate, base.pickupWindow, base.loadType);
-  const lim = getSlotLimit(base.pickupWindow, base.loadType);
-  const cartsSel = rows.reduce((s,r)=>s+(r.__cartons||0),0);
-  const cartsOK = cartsSel <= MAX_CARTS_PER_TRUCK;
-  const withinSlots = used < lim;
-  if (!cartsOK || !withinSlots){
-    showSuggestionModal({
-      reason: !withinSlots ? `No slots left for ${base.loadType} at ${base.pickupWindow}` :
-                             `Carton capacity would exceed ${MAX_CARTS_PER_TRUCK}`,
-      rows
+    const rows = appState.orders.filter((o) =>
+      selectedPOs.has(o["PO Num"] || "")
+    );
+    const cap = capacityCheck(t, rows);
+    const schedMismatch = false;
+
+    if (!cap.unitsOK || !cap.cartsOK || schedMismatch) {
+      showSuggestionModal({
+        reason: !cap.cartsOK
+          ? "Capacity exceeded for selected truck"
+          : "Schedule conflict detected",
+        rows,
+        targetLoad: t
+      });
+      return;
+    }
+
+    mergeRowsIntoLoad(t, rows);
+    renderAll();
+    saveState();
+  };
+
+// Create truckload modal (prefill)
+if ($("create-truckload-btn"))
+  $("create-truckload-btn").onclick = () => {
+    if (!selectedPOs.size) {
+      alert("Select at least one PO.");
+      return;
+    }
+    $("modal-selected-pos").textContent =
+      "POs: " + [...selectedPOs].join(", ");
+
+    const rows = appState.orders.filter((o) =>
+      selectedPOs.has(o["PO Num"] || "")
+    );
+    const recoDate = earliestDate(rows.map((r) => r.__recommendedShip));
+
+    $("tl-load-id").value = "LOAD-" + (appState.truckloads.length + 1);
+    $("tl-load-type").value = "Truckload";
+    $("tl-pickup-date").value = recoDate || "";
+    $("tl-pickup-window").value = "";
+    $("tl-carrier").value = mostCommon(rows.map((r) => r["Shipper"] || ""));
+    $("tl-customer").value = mostCommon(rows.map((r) => r["Cust Name"] || ""));
+    $("tl-bol").value = mostCommon(rows.map((r) => r["BOL#"] || ""));
+    $("tl-cartons").value = rows.reduce(
+      (s, r) => s + (r.__cartons || 0),
+      0
+    );
+    $("tl-pallets").value = sumNumber(rows, "Est. Pallet");
+
+    $("modal-overlay").classList.remove("hidden");
+  };
+
+if ($("tl-cancel"))
+  $("tl-cancel").onclick = () =>
+    $("modal-overlay").classList.add("hidden");
+
+if ($("tl-save"))
+  $("tl-save").onclick = () => {
+    const id =
+      $("tl-load-id").value.trim() ||
+      "LOAD-" + (appState.truckloads.length + 1);
+    const rows = appState.orders.filter((o) =>
+      selectedPOs.has(o["PO Num"] || "")
+    );
+
+    const base = buildLoadFromRows({
+      loadId: id,
+      rows,
+      loadTypeHint: $("tl-load-type").value
     });
-    return;
-  }
-  appState.truckloads.push(base);
-  $("modal-overlay").classList.add("hidden");
-  renderAll(); saveState();
-};
+
+    base.autoGenerated = false;
+    base.pickupDate = $("tl-pickup-date").value || base.pickupDate;
+    base.pickupWindow = $("tl-pickup-window").value.trim();
+    base.carrier = $("tl-carrier").value.trim() || base.carrier;
+    base.customer = $("tl-customer").value.trim() || base.customer;
+    base.bol = $("tl-bol").value.trim() || base.bol;
+
+    const used = getSlotUsage(
+      base.pickupDate,
+      base.pickupWindow,
+      base.loadType
+    );
+    const lim = getSlotLimit(base.pickupWindow, base.loadType);
+
+    const cartsSel = rows.reduce(
+      (s, r) => s + (r.__cartons || 0),
+      0
+    );
+    const cartsOK = cartsSel <= MAX_CARTS_PER_TRUCK;
+    const withinSlots = used < lim;
+
+    if (!cartsOK || !withinSlots) {
+      showSuggestionModal({
+        reason: !withinSlots
+          ? `No slots left for ${base.loadType} at ${base.pickupWindow}`
+          : `Carton capacity would exceed ${MAX_CARTS_PER_TRUCK}`,
+        rows
+      });
+      return;
+    }
+
+    appState.truckloads.push(base);
+    $("modal-overlay").classList.add("hidden");
+    renderAll();
+    saveState();
+  };
 
 // ========= SMART AUTO-ROUTER ENGINE (with small parcel) =========
-function onAutoRouteClicked(){
-  const useSelected = selectedPOs.size>0;
+function onAutoRouteClicked() {
+  const useSelected = selectedPOs.size > 0;
   const rows = useSelected
-    ? appState.orders.filter(o => selectedPOs.has(o["PO Num"]||""))
+    ? appState.orders.filter((o) => selectedPOs.has(o["PO Num"] || ""))
     : filteredOrders.slice();
 
-  if (!rows.length){ alert("No orders selected or visible."); return; }
+  if (!rows.length) {
+    alert("No orders selected or visible.");
+    return;
+  }
 
   const proposals = buildAutoProposals(rows);
   renderAutoModal(proposals);
 }
 
-/* --- auto-routing core --- */
-function buildAutoProposals(rows){
-  const sorted = [...rows].sort((a,b)=>{
-    const p = (a.__priority==="HIGH"?0:a.__priority==="MEDIUM"?1:2) -
-              (b.__priority==="HIGH"?0:b.__priority==="MEDIUM"?1:2);
-    if (p!==0) return p;
-    return (a.__recommendedShip||"").localeCompare(b.__recommendedShip||"");
+// --- auto-routing core ---
+function buildAutoProposals(rows) {
+  const sorted = [...rows].sort((a, b) => {
+    const pa =
+      a.__priority === "HIGH"
+        ? 0
+        : a.__priority === "MEDIUM"
+        ? 1
+        : 2;
+    const pb =
+      b.__priority === "HIGH"
+        ? 0
+        : b.__priority === "MEDIUM"
+        ? 1
+        : 2;
+    const p = pa - pb;
+    if (p !== 0) return p;
+    return (a.__recommendedShip || "").localeCompare(
+      b.__recommendedShip || ""
+    );
   });
 
-  const blocks = appState.settings.blocks.length ? appState.settings.blocks.map(b=>b.window) : ["(unspecified)"];
+  const blocks = appState.settings.blocks.length
+    ? appState.settings.blocks.map((b) => b.window)
+    : ["(unspecified)"];
+
   const proposals = [];
   let nextLoadNum = appState.truckloads.length + 1;
 
   const today = parseYMD(todayYMD());
   const plus2 = addDays(today, 2);
 
-  // --- phase 0: peel off small parcel (UPS / FXB) within 2 days ---
+  // Phase 0 — peel off small parcel (UPS / FXB) within 2 days
   const smallParcel = [];
   const remaining = [];
 
-  sorted.forEach(r=>{
-    const shipper = (r["Shipper"]||"").trim().toUpperCase();
+  sorted.forEach((r) => {
+    const shipper = (r["Shipper"] || "").trim().toUpperCase();
     const startD = parseYMD(r["Start Date"]);
-    const isSP = (shipper==="UPS" || shipper==="FXB");
-    if (isSP && startD && startD <= plus2){
+    const isSP = shipper === "UPS" || shipper === "FXB";
+
+    if (isSP && startD && startD <= plus2) {
       smallParcel.push(r);
     } else {
       remaining.push(r);
@@ -655,445 +1105,839 @@ function buildAutoProposals(rows){
 
   // group small parcel by shipper + effective date (Option C: earliest of Start Date vs recommended)
   const spBuckets = new Map(); // key: SHIPPER|YYYY-MM-DD
-  smallParcel.forEach(r=>{
-    const shipper = (r["Shipper"]||"").trim().toUpperCase();
+
+  smallParcel.forEach((r) => {
+    const shipper = (r["Shipper"] || "").trim().toUpperCase();
     const startD = parseYMD(r["Start Date"]);
     const recD = parseYMD(r.__recommendedShip);
     let eff = startD || recD || today;
-    if (startD && recD && recD < eff) eff = recD; // Option C: earliest of start vs recommended
+    if (startD && recD && recD < eff) eff = recD;
     const dateStr = ymd(eff);
     const key = shipper + "|" + dateStr;
-    if(!spBuckets.has(key)) spBuckets.set(key, []);
+    if (!spBuckets.has(key)) spBuckets.set(key, []);
     spBuckets.get(key).push(r);
   });
 
-  for (const [key, list] of spBuckets){
-    const [shipper,date] = key.split("|");
+  for (const [key, list] of spBuckets) {
+    const [shipper, origDate] = key.split("|");
+    let date = origDate;
     let idx = 0;
     let seq = 1;
-    while(idx < list.length){
+
+    while (idx < list.length) {
       let windowPick = null;
-      for(const w of blocks){
-        if(getSlotUsage(date,w,"Small Parcel")<getSlotLimit(w,"Small Parcel")){windowPick=w;break;}
+
+      for (const w of blocks) {
+        if (
+          getSlotUsage(date, w, "Small Parcel") <
+          getSlotLimit(w, "Small Parcel")
+        ) {
+          windowPick = w;
+          break;
+        }
       }
-      if(!windowPick){
-        let d = new Date(date); let tries=0;
-        while(!windowPick && tries<7){
-          d.setDate(d.getDate()+1);
+
+      if (!windowPick) {
+        let d = new Date(date);
+        let tries = 0;
+        while (!windowPick && tries < 7) {
+          d.setDate(d.getDate() + 1);
           const tryDate = ymd(d);
-          for(const w of blocks){
-            if(getSlotUsage(tryDate,w,"Small Parcel")<getSlotLimit(w,"Small Parcel")){windowPick=w;date=tryDate;break;}
+          for (const w of blocks) {
+            if (
+              getSlotUsage(tryDate, w, "Small Parcel") <
+              getSlotLimit(w, "Small Parcel")
+            ) {
+              windowPick = w;
+              date = tryDate;
+              break;
+            }
           }
           tries++;
         }
-        if(!windowPick) windowPick = blocks[0];
+        if (!windowPick) windowPick = blocks[0];
       }
 
-      const pack=[];let u=0,c=0;
-      while(idx<list.length){
-        const r=list[idx];
-        const fits=(u+(r.__units||0)<=MAX_UNITS_PER_TRUCK)&&(c+(r.__cartons||0)<=MAX_CARTS_PER_TRUCK);
-        if(!fits && pack.length>0) break;
-        pack.push(r);u+=r.__units||0;c+=r.__cartons||0;idx++;
-        if(u>=MAX_UNITS_PER_TRUCK||c>=MAX_CARTS_PER_TRUCK)break;
+      const pack = [];
+      let u = 0;
+      let c = 0;
+
+      while (idx < list.length) {
+        const r = list[idx];
+        const fits =
+          u + (r.__units || 0) <= MAX_UNITS_PER_TRUCK &&
+          c + (r.__cartons || 0) <= MAX_CARTS_PER_TRUCK;
+        if (!fits && pack.length > 0) break;
+        pack.push(r);
+        u += r.__units || 0;
+        c += r.__cartons || 0;
+        idx++;
+        if (u >= MAX_UNITS_PER_TRUCK || c >= MAX_CARTS_PER_TRUCK) break;
       }
-      const fill=Math.min((c/MAX_CARTS_PER_TRUCK)*100,(u/MAX_UNITS_PER_TRUCK)*100);
+
+      const fill = Math.min(
+        (c / MAX_CARTS_PER_TRUCK) * 100,
+        (u / MAX_UNITS_PER_TRUCK) * 100
+      );
+
       proposals.push({
-        id:`AUTO-SP-${shipper}-${date}-${seq++}`,
-        type:"smallparcel",
-        parcelCarrier:shipper,
-        customer:"Multiple Customers",
-        date,window:windowPick,
-        rows:pack,units:u,cartons:c,fill:Math.round(fill)
+        id: `AUTO-SP-${shipper}-${date}-${seq++}`,
+        type: "smallparcel",
+        parcelCarrier: shipper,
+        customer: "Multiple Customers",
+        date,
+        window: windowPick,
+        rows: pack,
+        units: u,
+        cartons: c,
+        fill: Math.round(fill)
       });
     }
   }
 
-  // --- phase 1: separate remaining by center vs direct store ---
-  const direct = remaining.filter(r => !(r["Center"]||"").trim());
-  const centers = remaining.filter(r => (r["Center"]||"").trim());
+  // Phase 1 — separate remaining by center vs direct store
+  const direct = remaining.filter((r) => !(r["Center"] || "").trim());
+  const centers = remaining.filter((r) => (r["Center"] || "").trim());
 
-  // --- phase 2: consolidation-center groups ---
+  // Phase 2 — consolidation-center groups
   const byCenter = new Map();
-  centers.forEach(r=>{
-    const key = (r["Center"]||"").trim()+"|"+(r["Cust Name"]||"").trim()+"|"+(r["Shipper"]||"").trim();
-    if(!byCenter.has(key)) byCenter.set(key,[]);
+  centers.forEach((r) => {
+    const key =
+      (r["Center"] || "").trim() +
+      "|" +
+      (r["Cust Name"] || "").trim() +
+      "|" +
+      (r["Shipper"] || "").trim();
+    if (!byCenter.has(key)) byCenter.set(key, []);
     byCenter.get(key).push(r);
   });
 
-  for (const [key, list] of byCenter){
-    const [center,cust,carrier] = key.split("|");
-    let idx=0;
-    while(idx<list.length){
-      let date=list[idx].__recommendedShip;
-      let windowPick=null;
-      for(const w of blocks){
-        if(getSlotUsage(date,w,"Truckload")<getSlotLimit(w,"Truckload")){windowPick=w;break;}
+  for (const [key, list] of byCenter) {
+    const [center, cust, carrier] = key.split("|");
+    let idx = 0;
+
+    while (idx < list.length) {
+      let date = list[idx].__recommendedShip;
+      let windowPick = null;
+
+      for (const w of blocks) {
+        if (
+          getSlotUsage(date, w, "Truckload") <
+          getSlotLimit(w, "Truckload")
+        ) {
+          windowPick = w;
+          break;
+        }
       }
-      if(!windowPick){
-        let d=new Date(date);let tries=0;
-        while(!windowPick && tries<7){
-          d.setDate(d.getDate()+1);const tryDate=ymd(d);
-          for(const w of blocks){
-            if(getSlotUsage(tryDate,w,"Truckload")<getSlotLimit(w,"Truckload")){windowPick=w;date=tryDate;break;}
+
+      if (!windowPick) {
+        let d = new Date(date);
+        let tries = 0;
+        while (!windowPick && tries < 7) {
+          d.setDate(d.getDate() + 1);
+          const tryDate = ymd(d);
+          for (const w of blocks) {
+            if (
+              getSlotUsage(tryDate, w, "Truckload") <
+              getSlotLimit(w, "Truckload")
+            ) {
+              windowPick = w;
+              date = tryDate;
+              break;
+            }
           }
           tries++;
         }
-        if(!windowPick) windowPick=blocks[0];
+        if (!windowPick) windowPick = blocks[0];
       }
-      const pack=[];let u=0,c=0;
-      while(idx<list.length){
-        const r=list[idx];
-        const fits=(u+(r.__units||0)<=MAX_UNITS_PER_TRUCK)&&(c+(r.__cartons||0)<=MAX_CARTS_PER_TRUCK);
-        if(!fits && pack.length>0) break;
-        pack.push(r);u+=r.__units||0;c+=r.__cartons||0;idx++;
-        if(u>=MAX_UNITS_PER_TRUCK||c>=MAX_CARTS_PER_TRUCK)break;
+
+      const pack = [];
+      let u = 0;
+      let c = 0;
+
+      while (idx < list.length) {
+        const r = list[idx];
+        const fits =
+          u + (r.__units || 0) <= MAX_UNITS_PER_TRUCK &&
+          c + (r.__cartons || 0) <= MAX_CARTS_PER_TRUCK;
+        if (!fits && pack.length > 0) break;
+        pack.push(r);
+        u += r.__units || 0;
+        c += r.__cartons || 0;
+        idx++;
+        if (u >= MAX_UNITS_PER_TRUCK || c >= MAX_CARTS_PER_TRUCK) break;
       }
-      const fill=Math.min((c/MAX_CARTS_PER_TRUCK)*100,(u/MAX_UNITS_PER_TRUCK)*100);
+
+      const fill = Math.min(
+        (c / MAX_CARTS_PER_TRUCK) * 100,
+        (u / MAX_UNITS_PER_TRUCK) * 100
+      );
+
       proposals.push({
-        id:`AUTO-${center}-${nextLoadNum++}`,
-        type:"center",
-        center,customer:cust,carrier,
-        date,window:windowPick,
-        rows:pack,units:u,cartons:c,fill:Math.round(fill)
+        id: `AUTO-${center}-${nextLoadNum++}`,
+        type: "center",
+        center,
+        customer: cust,
+        carrier,
+        date,
+        window: windowPick,
+        rows: pack,
+        units: u,
+        cartons: c,
+        fill: Math.round(fill)
       });
     }
   }
 
-  // --- phase 3: direct-store orders (store field non-center) ---
-  direct.forEach(r=>{
-    const isAmazon=String(r["Cust Name"]||"").toLowerCase().includes("amazon");
-    const po=r["PO Num"]||crypto.randomUUID().slice(0,6);
-    const id=`AUTO-STORE-${po}`;
-    const date=r.__recommendedShip;
-    let win=null;
-    for(const w of blocks){if(getSlotUsage(date,w,"Truckload")<getSlotLimit(w,"Truckload")){win=w;break;}}
-    if(!win)win=blocks[0];
+  // Phase 3 — direct-store orders
+  direct.forEach((r) => {
+    const isAmazon = String(r["Cust Name"] || "")
+      .toLowerCase()
+      .includes("amazon");
+    const po = r["PO Num"] || crypto.randomUUID().slice(0, 6);
+    const id = `AUTO-STORE-${po}`;
+    const date = r.__recommendedShip;
+
+    let win = null;
+    for (const w of blocks) {
+      if (
+        getSlotUsage(date, w, "Truckload") <
+        getSlotLimit(w, "Truckload")
+      ) {
+        win = w;
+        break;
+      }
+    }
+    if (!win) win = blocks[0];
+
     proposals.push({
       id,
-      type:"store",
-      store:r["Store"]||"",
-      carrier:r["Shipper"]||"",
-      customer:r["Cust Name"]||"",
-      date,window:win,
-      rows:[r],
-      units:r.__units||0,cartons:r.__cartons||0,fill:Math.round(((r.__cartons||0)/MAX_CARTS_PER_TRUCK)*100),
-      amazon:isAmazon
+      type: "store",
+      store: r["Store"] || "",
+      carrier: r["Shipper"] || "",
+      customer: r["Cust Name"] || "",
+      date,
+      window: win,
+      rows: [r],
+      units: r.__units || 0,
+      cartons: r.__cartons || 0,
+      fill: Math.round(
+        ((r.__cartons || 0) / MAX_CARTS_PER_TRUCK) * 100
+      ),
+      amazon: isAmazon
     });
   });
 
   return proposals;
 }
 
-/* --- render proposal modal --- */
-function renderAutoModal(proposals){
-  const tb=document.querySelector("#auto-table tbody");
-  tb.innerHTML=proposals.map(p=>{
-    let notes="";
-    if(p.type==="center") notes="⚠️ Master BOL Needed";
-    else if(p.type==="store" && p.amazon) notes="🟡 Amazon Solo";
-    else if(p.type==="smallparcel") notes=`📦 Small Parcel ${p.parcelCarrier}`;
-    return `<tr class="${p.type==='center'?'row-warn':''}">
-      <td><input type="checkbox" class="auto-pick" data-id="${p.id}" ${p.fill>=60?"checked":""}></td>
-      <td>${p.id}</td>
-      <td>${p.date}</td>
-      <td>${p.window}</td>
-      <td>${p.carrier || p.parcelCarrier || ""}</td>
-      <td>${p.rows.length}</td>
-      <td>${p.units.toLocaleString()}</td>
-      <td>${p.cartons.toLocaleString()}</td>
-      <td>${p.fill}%</td>
-      <td>${notes}</td>
-    </tr>`;
-  }).join("");
+// --- render proposal modal ---
+function renderAutoModal(proposals) {
+  const tb = document.querySelector("#auto-table tbody");
+  tb.innerHTML = proposals
+    .map((p) => {
+      let notes = "";
+      if (p.type === "center") notes = "⚠️ Master BOL Needed";
+      else if (p.type === "store" && p.amazon) notes = "🟡 Amazon Solo";
+      else if (p.type === "smallparcel")
+        notes = `📦 Small Parcel ${p.parcelCarrier}`;
+      return `
+        <tr class="${p.type === "center" ? "row-warn" : ""}">
+          <td><input type="checkbox" class="auto-pick" data-id="${
+            p.id
+          }" ${p.fill >= 60 ? "checked" : ""}></td>
+          <td>${p.id}</td>
+          <td>${p.date}</td>
+          <td>${p.window}</td>
+          <td>${p.carrier || p.parcelCarrier || ""}</td>
+          <td>${p.rows.length}</td>
+          <td>${p.units.toLocaleString()}</td>
+          <td>${p.cartons.toLocaleString()}</td>
+          <td>${p.fill}%</td>
+          <td>${notes}</td>
+        </tr>`;
+    })
+    .join("");
 
-  const uTot=proposals.reduce((s,p)=>s+p.units,0);
-  const cTot=proposals.reduce((s,p)=>s+p.cartons,0);
-  $("auto-summary").textContent=`Proposed loads: ${proposals.length} • Total Units ${uTot.toLocaleString()} • Total Cartons ${cTot.toLocaleString()}`;
+  const uTot = proposals.reduce((s, p) => s + p.units, 0);
+  const cTot = proposals.reduce((s, p) => s + p.cartons, 0);
+  $("auto-summary").textContent = `Proposed loads: ${
+    proposals.length
+  } • Total Units ${uTot.toLocaleString()} • Total Cartons ${cTot.toLocaleString()}`;
 
   $("auto-overlay").classList.remove("hidden");
 
-  $("auto-confirm-all").onclick=()=>confirmAutoProposals(proposals);
-  $("auto-confirm-selected").onclick=()=>{
-    const ids=[...document.querySelectorAll(".auto-pick:checked")].map(x=>x.dataset.id);
-    confirmAutoProposals(proposals.filter(p=>ids.includes(p.id)));
+  $("auto-confirm-all").onclick = () =>
+    confirmAutoProposals(proposals);
+
+  $("auto-confirm-selected").onclick = () => {
+    const ids = [
+      ...document.querySelectorAll(".auto-pick:checked")
+    ].map((x) => x.dataset.id);
+    confirmAutoProposals(
+      proposals.filter((p) => ids.includes(p.id))
+    );
   };
 }
 
-/* --- confirm proposals into real loads --- */
-function confirmAutoProposals(proposals){
-  if(!proposals.length){$("auto-overlay").classList.add("hidden");return;}
-  for(const p of proposals){
-    const typeHint = p.type==="smallparcel" ? "Small Parcel" : "Truckload";
-    const base=buildLoadFromRows({loadId:p.id,rows:p.rows,loadTypeHint:typeHint});
-    base.autoGenerated=false;
-    base.pickupDate=p.date;
-    base.pickupWindow=p.window;
-    base.carrier=p.carrier || p.parcelCarrier || base.carrier;
-    base.customer=p.customer || base.customer;
-    if(p.type==="center"){ base.status="⚠ Master BOL Required"; }
-    if(p.type==="smallparcel"){
-      base.status="Small Parcel – Ready";
+// --- confirm proposals into real loads ---
+function confirmAutoProposals(proposals) {
+  if (!proposals.length) {
+    $("auto-overlay").classList.add("hidden");
+    return;
+  }
+
+  for (const p of proposals) {
+    const typeHint =
+      p.type === "smallparcel" ? "Small Parcel" : "Truckload";
+    const base = buildLoadFromRows({
+      loadId: p.id,
+      rows: p.rows,
+      loadTypeHint: typeHint
+    });
+
+    base.autoGenerated = false; // manual-like so it is preserved
+    base.pickupDate = p.date;
+    base.pickupWindow = p.window;
+    base.carrier = p.carrier || p.parcelCarrier || base.carrier;
+    base.customer = p.customer || base.customer;
+
+    if (p.type === "center") {
+      base.status = "⚠ Master BOL Required";
+    }
+    if (p.type === "smallparcel") {
+      base.status = "Small Parcel – Ready";
       base.customer = "Multiple Customers";
     }
+
     appState.truckloads.push(base);
   }
+
   $("auto-overlay").classList.add("hidden");
-  saveState(); renderAll();
+  saveState();
+  renderAll();
 }
 
 // ========= DOCK RENDER / EDIT =========
-function renderDock(){
-  const tb = $("dock-body"); if(!tb) return;
-  const q = ($("dock-search")?.value||"").toLowerCase();
+function renderDock() {
+  const tb = $("dock-body");
+  if (!tb) return;
+  const q = ($("dock-search")?.value || "").toLowerCase();
   tb.innerHTML = "";
 
-  const loads = [...appState.truckloads].sort((a,b)=> (a.pickupDate||"") < (b.pickupDate||"") ? -1 : 1);
-  loads.filter(t=>{
-    if(!q) return true;
-    return [t.loadId,t.customer,t.carrier,t.loadType,t.pickupDate,t.pickupWindow,t.stagedLocation,(t.assignedTo||[]).join(", "),t.status]
-      .some(v=>String(v||"").toLowerCase().includes(q));
-  }).forEach(t=>{
-    const tr=document.createElement("tr");
-    tr.innerHTML = `
-      <td>${t.loadId}</td>
-      <td>${t.customer||""}</td>
-      <td>${t.carrier||""}</td>
-      <td>${t.loadType||""}</td>
-      <td>${t.pickupDate||""}</td>
-      <td>${t.pickupWindow||""}</td>
-      <td>${t.cartons||0}</td>
-      <td>${t.pallets||0}</td>
-      <td><input class="cell-input" data-bind="actualPallets" data-id="${t.loadId}" type="number" min="0" value="${t.actualPallets||0}"></td>
-      <td><input class="cell-input" data-bind="stagedLocation" data-id="${t.loadId}" value="${t.stagedLocation||""}"></td>
-      <td>
-        <input class="cell-input" data-bind="assignedTo" data-id="${t.loadId}" placeholder="Type names... (comma separated)" value="${(t.assignedTo||[]).join(", ")}">
-      </td>
-      <td>${t.status||""}</td>
-      <td>
-        <button class="btn tiny" data-assign="${t.loadId}">Start</button>
-        <button class="btn tiny secondary" data-stage="${t.loadId}">Fully Staged</button>
-      </td>
-    `;
-    tb.appendChild(tr);
-  });
+  const loads = [...appState.truckloads].sort((a, b) =>
+    (a.pickupDate || "") < (b.pickupDate || "") ? -1 : 1
+  );
 
-  tb.querySelectorAll(".cell-input").forEach(inp=>{
+  loads
+    .filter((t) => {
+      if (!q) return true;
+      return [
+        t.loadId,
+        t.customer,
+        t.carrier,
+        t.loadType,
+        t.pickupDate,
+        t.pickupWindow,
+        t.stagedLocation,
+        (t.assignedTo || []).join(", "),
+        t.status
+      ]
+        .some((v) =>
+          String(v || "").toLowerCase().includes(q)
+        );
+    })
+    .forEach((t) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${t.loadId}</td>
+        <td>${t.customer || ""}</td>
+        <td>${t.carrier || ""}</td>
+        <td>${t.loadType || ""}</td>
+        <td>${t.pickupDate || ""}</td>
+        <td>${t.pickupWindow || ""}</td>
+        <td>${t.cartons || 0}</td>
+        <td>${t.pallets || 0}</td>
+        <td><input class="cell-input" data-bind="actualPallets" data-id="${
+          t.loadId
+        }" type="number" min="0" value="${t.actualPallets || 0}"></td>
+        <td><input class="cell-input" data-bind="stagedLocation" data-id="${
+          t.loadId
+        }" value="${t.stagedLocation || ""}"></td>
+        <td>
+          <input class="cell-input" data-bind="assignedTo" data-id="${
+            t.loadId
+          }" placeholder="Type names... (comma separated)" value="${
+        (t.assignedTo || []).join(", ")
+      }">
+        </td>
+        <td>${t.status || ""}</td>
+        <td>
+          <button class="btn tiny" data-assign="${
+            t.loadId
+          }">Start</button>
+          <button class="btn tiny secondary" data-stage="${
+            t.loadId
+          }">Fully Staged</button>
+        </td>
+      `;
+      tb.appendChild(tr);
+    });
+
+  tb.querySelectorAll(".cell-input").forEach((inp) => {
     inp.onchange = () => {
-      const t = appState.truckloads.find(x=>x.loadId===inp.dataset.id); if(!t) return;
+      const t = appState.truckloads.find(
+        (x) => x.loadId === inp.dataset.id
+      );
+      if (!t) return;
       const key = inp.dataset.bind;
-      if (key==="assignedTo") t[key] = inp.value.split(",").map(s=>s.trim()).filter(Boolean);
-      else if (key==="actualPallets") t[key] = +inp.value||0;
-      else t[key] = inp.value;
+      if (key === "assignedTo") {
+        t[key] = inp.value
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+      } else if (key === "actualPallets") {
+        t[key] = +inp.value || 0;
+      } else {
+        t[key] = inp.value;
+      }
       saveState();
     };
   });
 
-  tb.querySelectorAll("[data-assign]").forEach(b=>b.onclick=()=>{
-    const t=appState.truckloads.find(x=>x.loadId===b.dataset.assign); if(!t) return;
-    t.status="Being staged"; saveState(); renderAll();
-  });
-  tb.querySelectorAll("[data-stage]").forEach(b=>b.onclick=()=>{
-    const t=appState.truckloads.find(x=>x.loadId===b.dataset.stage); if(!t) return;
-    t.status="Fully staged"; saveState(); renderAll();
-  });
+  tb.querySelectorAll("[data-assign]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        const t = appState.truckloads.find(
+          (x) => x.loadId === b.dataset.assign
+        );
+        if (!t) return;
+        t.status = "Being staged";
+        saveState();
+        renderAll();
+      })
+  );
+
+  tb.querySelectorAll("[data-stage]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        const t = appState.truckloads.find(
+          (x) => x.loadId === b.dataset.stage
+        );
+        if (!t) return;
+        t.status = "Fully staged";
+        saveState();
+        renderAll();
+      })
+  );
 }
-if ($("dock-search")) $("dock-search").oninput = ()=>renderDock();
-if ($("dock-clear")) $("dock-clear").onclick = ()=>{ $("dock-search").value=""; renderDock(); };
+
+if ($("dock-search"))
+  $("dock-search").oninput = () => renderDock();
+
+if ($("dock-clear"))
+  $("dock-clear").onclick = () => {
+    $("dock-search").value = "";
+    renderDock();
+  };
 
 // ========= TODAY'S PICKUPS =========
-function renderTodays(){
-  const tb = $("today-body"); if(!tb) return;
+function renderTodays() {
+  const tb = $("today-body");
+  if (!tb) return;
   tb.innerHTML = "";
+
   const today = todayYMD();
-  const loads = appState.truckloads.filter(t=>t.pickupDate && sameDate(t.pickupDate, today));
+  const loads = appState.truckloads.filter(
+    (t) => t.pickupDate && sameDate(t.pickupDate, today)
+  );
 
-  loads.sort((a,b)=>{
-    const p = a.status==="At door" ? -1 : a.status==="Departed" ? 1 : 0;
-    const q = b.status==="At door" ? -1 : b.status==="Departed" ? 1 : 0;
-    return p-q;
-  }).forEach(t=>{
-    const tr=document.createElement("tr");
-    tr.className = t.status==="At door" ? "row-arrived" : t.status==="Departed" ? "row-departed" : "";
-    tr.innerHTML = `
-      <td>${t.loadId}</td><td>${t.customer||""}</td><td>${t.carrier||""}</td><td>${t.loadType||""}</td>
-      <td>${t.pickupWindow||""}</td><td>${t.cartons||0}</td>
-      <td><input class="cell-input" data-bind="loadedBy" data-id="${t.loadId}" placeholder="Comma separated" value="${(t.loadedBy||[]).join(", ")}"></td>
-      <td>${t.status||""}</td>
-      <td><button class="btn tiny" data-arrived="${t.loadId}">Arrived</button></td>
-      <td><button class="btn tiny secondary" data-departed="${t.loadId}">Departed</button></td>
-    `;
-    tb.appendChild(tr);
-  });
+  loads
+    .sort((a, b) => {
+      const p =
+        a.status === "At door"
+          ? -1
+          : a.status === "Departed"
+          ? 1
+          : 0;
+      const q =
+        b.status === "At door"
+          ? -1
+          : b.status === "Departed"
+          ? 1
+          : 0;
+      return p - q;
+    })
+    .forEach((t) => {
+      const tr = document.createElement("tr");
+      tr.className =
+        t.status === "At door"
+          ? "row-arrived"
+          : t.status === "Departed"
+          ? "row-departed"
+          : "";
+      tr.innerHTML = `
+        <td>${t.loadId}</td>
+        <td>${t.customer || ""}</td>
+        <td>${t.carrier || ""}</td>
+        <td>${t.loadType || ""}</td>
+        <td>${t.pickupWindow || ""}</td>
+        <td>${t.cartons || 0}</td>
+        <td><input class="cell-input" data-bind="loadedBy" data-id="${
+          t.loadId
+        }" placeholder="Comma separated" value="${
+        (t.loadedBy || []).join(", ")
+      }"></td>
+        <td>${t.status || ""}</td>
+        <td><button class="btn tiny" data-arrived="${
+          t.loadId
+        }">Arrived</button></td>
+        <td><button class="btn tiny secondary" data-departed="${
+          t.loadId
+        }">Departed</button></td>
+      `;
+      tb.appendChild(tr);
+    });
 
-  tb.querySelectorAll("[data-arrived]").forEach(b=>b.onclick=()=>{
-    const t=appState.truckloads.find(x=>x.loadId===b.dataset.arrived); if(!t)return;
-    t.status="At door"; saveState(); renderTodays(); renderTruckloads();
-  });
-  tb.querySelectorAll("[data-departed]").forEach(b=>b.onclick=()=>{
-    const t=appState.truckloads.find(x=>x.loadId===b.dataset.departed); if(!t)return;
-    t.status="Departed"; t.departed=true;
-    appState.history.push({ loadId:t.loadId, customer:t.customer, carrier:t.carrier, pickupDate:t.pickupDate, pickupWindow:t.pickupWindow, status:"Departed" });
-    saveState(); renderTodays(); renderHistory(); renderTruckloads();
-  });
+  tb.querySelectorAll("[data-arrived]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        const t = appState.truckloads.find(
+          (x) => x.loadId === b.dataset.arrived
+        );
+        if (!t) return;
+        t.status = "At door";
+        saveState();
+        renderTodays();
+        renderTruckloads();
+      })
+  );
 
-  tb.querySelectorAll(".cell-input[data-bind='loadedBy']").forEach(inp=>{
-    inp.onchange=()=>{ const t=appState.truckloads.find(x=>x.loadId===inp.dataset.id); if(!t)return; t.loadedBy=inp.value.split(",").map(s=>s.trim()).filter(Boolean); saveState(); };
-  });
+  tb.querySelectorAll("[data-departed]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        const t = appState.truckloads.find(
+          (x) => x.loadId === b.dataset.departed
+        );
+        if (!t) return;
+        t.status = "Departed";
+        t.departed = true;
+        appState.history.push({
+          loadId: t.loadId,
+          customer: t.customer,
+          carrier: t.carrier,
+          pickupDate: t.pickupDate,
+          pickupWindow: t.pickupWindow,
+          status: "Departed"
+        });
+        saveState();
+        renderTodays();
+        renderHistory();
+        renderTruckloads();
+      })
+  );
+
+  tb.querySelectorAll(".cell-input[data-bind='loadedBy']").forEach(
+    (inp) =>
+      (inp.onchange = () => {
+        const t = appState.truckloads.find(
+          (x) => x.loadId === inp.dataset.id
+        );
+        if (!t) return;
+        t.loadedBy = inp.value
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        saveState();
+      })
+  );
 }
 
 // ========= TRUCKLOADS + DRILL-DOWN =========
-function renderTruckloads(){
-  const tb = $("truckloads-body"); if(!tb) return;
+function renderTruckloads() {
+  const tb = $("truckloads-body");
+  if (!tb) return;
   tb.innerHTML = "";
-  appState.truckloads.forEach(t=>{
-    const tr=document.createElement("tr");
-    tr.className="tl-row";
-    tr.dataset.id=t.loadId;
+
+  appState.truckloads.forEach((t) => {
+    const tr = document.createElement("tr");
+    tr.className = "tl-row";
+    tr.dataset.id = t.loadId;
 
     const needsMaster = String(t.status || "").includes("Master BOL");
-    const isSmallParcel = t.loadType==="Small Parcel";
-    const masterBadge = needsMaster ? `<span class="badge badge-warn" title="Master BOL Required">⚠</span>` : "";
-    const spBadge = isSmallParcel ? `<span class="badge badge-info" title="Small Parcel Load">SP</span>` : "";
+    const isSmallParcel = t.loadType === "Small Parcel";
+    const masterBadge = needsMaster
+      ? `<span class="badge badge-warn" title="Master BOL Required">⚠</span>`
+      : "";
+    const spBadge = isSmallParcel
+      ? `<span class="badge badge-info" title="Small Parcel Load">SP</span>`
+      : "";
     const badge = masterBadge || spBadge;
 
-    tr.innerHTML=`
+    tr.innerHTML = `
       <td>${t.loadId} ${badge}</td>
-      <td>${t.customer||""}</td>
-      <td>${t.carrier||""}</td>
-      <td>${t.loadType||""}</td>
-      <td>${t.pickupDate||""}</td>
-      <td>${t.pickupWindow||""}</td>
-      <td>${t.cartons||0}</td>
-      <td>${t.status||""}</td>
+      <td>${t.customer || ""}</td>
+      <td>${t.carrier || ""}</td>
+      <td>${t.loadType || ""}</td>
+      <td>${t.pickupDate || ""}</td>
+      <td>${t.pickupWindow || ""}</td>
+      <td>${t.cartons || 0}</td>
+      <td>${t.status || ""}</td>
     `;
     tb.appendChild(tr);
   });
 
-  document.querySelectorAll(".tl-row").forEach(row => row.onclick = () => {
-    const id = row.dataset.id;
-    const load = appState.truckloads.find(t => t.loadId === id);
-    if (!load) return;
+  document.querySelectorAll(".tl-row").forEach((row) => {
+    row.onclick = () => {
+      const id = row.dataset.id;
+      const load = appState.truckloads.find((t) => t.loadId === id);
+      if (!load) return;
 
-    const body = $("tl-detail-body");
-    body.innerHTML = load.masterGroups.map(m =>
-      `<div class="mb"><strong>Master BOL:</strong> ${m.masterBol || "(none)"}<ul class="ul-compact">` +
-      m.bols.map(bl => `<li><strong>${bl.bol || "(no BOL)"}:</strong> ${bl.pos.map(p => p.po).join(", ")}</li>`).join("") +
-      `</ul></div>`
-    ).join("");
+      const body = $("tl-detail-body");
+      body.innerHTML = load.masterGroups
+        .map(
+          (m) =>
+            `<div class="mb">
+              <strong>Master BOL:</strong> ${
+                m.masterBol || "(none)"
+              }
+              <ul class="ul-compact">
+                ${m.bols
+                  .map(
+                    (bl) =>
+                      `<li><strong>${
+                        bl.bol || "(no BOL)"
+                      }:</strong> ${bl.pos
+                        .map((p) => p.po)
+                        .join(", ")}</li>`
+                  )
+                  .join("")}
+              </ul>
+            </div>`
+        )
+        .join("");
 
-    $("tl-detail-title").textContent = `${load.loadId} — ${load.customer||""}`;
+      $("tl-detail-title").textContent = `${
+        load.loadId
+      } — ${load.customer || ""}`;
 
-    $("ed-load-id").value = load.loadId||"";
-    $("ed-pickup-date").value = load.pickupDate||"";
-    $("ed-pickup-window").value = load.pickupWindow||"";
-    $("ed-carrier").value = load.carrier||"";
-    $("ed-customer").value = load.customer||"";
+      $("ed-load-id").value = load.loadId || "";
+      $("ed-pickup-date").value = load.pickupDate || "";
+      $("ed-pickup-window").value = load.pickupWindow || "";
+      $("ed-carrier").value = load.carrier || "";
+      $("ed-customer").value = load.customer || "";
 
-    $("tl-detail-overlay").classList.remove("hidden");
+      $("tl-detail-overlay").classList.remove("hidden");
 
-    $("tl-detail-close").onclick = () => $("tl-detail-overlay").classList.add("hidden");
-    $("tl-detail-save").onclick = () => {
-      load.loadId = $("ed-load-id").value.trim() || load.loadId;
-      load.pickupDate = $("ed-pickup-date").value;
-      load.pickupWindow = $("ed-pickup-window").value.trim();
-      load.carrier = $("ed-carrier").value.trim();
-      load.customer = $("ed-customer").value.trim();
-      saveState(); renderAll();
-      $("tl-detail-overlay").classList.add("hidden");
+      $("tl-detail-close").onclick = () =>
+        $("tl-detail-overlay").classList.add("hidden");
+
+      $("tl-detail-save").onclick = () => {
+        load.loadId =
+          $("ed-load-id").value.trim() || load.loadId;
+        load.pickupDate = $("ed-pickup-date").value;
+        load.pickupWindow = $("ed-pickup-window").value.trim();
+        load.carrier = $("ed-carrier").value.trim();
+        load.customer = $("ed-customer").value.trim();
+        saveState();
+        renderAll();
+        $("tl-detail-overlay").classList.add("hidden");
+      };
     };
   });
 }
 
 // ========= HISTORY =========
-function renderHistory(){
-  const tb=$("history-body"); if(!tb) return; tb.innerHTML="";
-  const q = ($("history-search")?.value||"").toLowerCase();
-  appState.history.filter(h=>{
-    if(!q) return true;
-    return [h.loadId,h.customer,h.carrier,h.pickupDate,h.pickupWindow,h.status].some(v=>String(v||"").toLowerCase().includes(q));
-  }).forEach(h=>{
-    const tr=document.createElement("tr");
-    tr.innerHTML=`<td>${h.loadId}</td><td>${h.customer||""}</td><td>${h.carrier||""}</td><td>${h.pickupDate||""}</td><td>${h.pickupWindow||""}</td><td>${h.status}</td>`;
-    tr.onclick = () => {
-      const fakeRow = document.querySelector(`.tl-row[data-id="${h.loadId}"]`);
-      if(fakeRow) fakeRow.click();
-    };
-    tb.appendChild(tr);
-  });
+function renderHistory() {
+  const tb = $("history-body");
+  if (!tb) return;
+  tb.innerHTML = "";
+
+  const q = ($("history-search")?.value || "").toLowerCase();
+
+  appState.history
+    .filter((h) => {
+      if (!q) return true;
+      return [
+        h.loadId,
+        h.customer,
+        h.carrier,
+        h.pickupDate,
+        h.pickupWindow,
+        h.status
+      ]
+        .some((v) =>
+          String(v || "").toLowerCase().includes(q)
+        );
+    })
+    .forEach((h) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${h.loadId}</td>
+        <td>${h.customer || ""}</td>
+        <td>${h.carrier || ""}</td>
+        <td>${h.pickupDate || ""}</td>
+        <td>${h.pickupWindow || ""}</td>
+        <td>${h.status}</td>
+      `;
+      tr.onclick = () => {
+        const fakeRow = document.querySelector(
+          `.tl-row[data-id="${h.loadId}"]`
+        );
+        if (fakeRow) fakeRow.click();
+      };
+      tb.appendChild(tr);
+    });
 }
-if ($("history-search")) $("history-search").oninput=()=>renderHistory();
-if ($("history-clear")) $("history-clear").onclick=()=>{ $("history-search").value=""; renderHistory(); };
+
+if ($("history-search"))
+  $("history-search").oninput = () => renderHistory();
+
+if ($("history-clear"))
+  $("history-clear").onclick = () => {
+    $("history-search").value = "";
+    renderHistory();
+  };
 
 // ========= METRICS =========
-function renderMetrics(){
-  const month = new Date().toISOString().slice(0,7);
-  const mLoads = appState.truckloads.filter(t=> (t.pickupDate||"").startsWith(month)).length;
-  const totalCartons = appState.truckloads.reduce((s,t)=>s+(t.cartons||0),0);
-  const staged = appState.truckloads.filter(t=>t.status==="Fully staged").length;
-  if ($("m-total-loads")) $("m-total-loads").textContent=mLoads;
-  if ($("m-cartons")) $("m-cartons").textContent=totalCartons;
-  if ($("m-staged")) $("m-staged").textContent=staged;
+function renderMetrics() {
+  const month = new Date().toISOString().slice(0, 7);
+  const mLoads = appState.truckloads.filter((t) =>
+    (t.pickupDate || "").startsWith(month)
+  ).length;
+  const totalCartons = appState.truckloads.reduce(
+    (s, t) => s + (t.cartons || 0),
+    0
+  );
+  const staged = appState.truckloads.filter(
+    (t) => t.status === "Fully staged"
+  ).length;
+
+  if ($("m-total-loads")) $("m-total-loads").textContent = mLoads;
+  if ($("m-cartons")) $("m-cartons").textContent = totalCartons;
+  if ($("m-staged")) $("m-staged").textContent = staged;
 }
 
 // ========= CALENDAR =========
 let calAnchor = new Date();
-function dateAdd(d,days){const x=new Date(d);x.setDate(x.getDate()+days);return x;}
-function fmtTitle(d){return d.toLocaleString(undefined,{month:"long",year:"numeric"});}
 
-function renderCalendar(){
-  const grid = $("calendar-grid"); if(!grid) return;
+function dateAdd(d, days) {
+  const x = new Date(d);
+  x.setDate(x.getDate() + days);
+  return x;
+}
+
+function fmtTitle(d) {
+  return d.toLocaleString(undefined, {
+    month: "long",
+    year: "numeric"
+  });
+}
+
+function renderCalendar() {
+  const grid = $("calendar-grid");
+  if (!grid) return;
+
   const view = $("cal-view")?.value || "month";
-  const filter = ($("cal-filter")?.value||"").toLowerCase();
+  const filter = ($("cal-filter")?.value || "").toLowerCase();
 
   let start, days;
-  const dow = (calAnchor.getDay()+6)%7;
-  if(view==="wk"){ start = dateAdd(calAnchor, -dow); days = 7; }
-  else if(view==="2w"){ start = dateAdd(calAnchor, -dow); days = 14; }
-  else { const mStart = new Date(calAnchor.getFullYear(), calAnchor.getMonth(), 1); const lead=(mStart.getDay()+6)%7; start=dateAdd(mStart,-lead); days=42; }
+  const dow = (calAnchor.getDay() + 6) % 7; // Monday = 0
+
+  if (view === "wk") {
+    start = dateAdd(calAnchor, -dow);
+    days = 7;
+  } else if (view === "2w") {
+    start = dateAdd(calAnchor, -dow);
+    days = 14;
+  } else {
+    const mStart = new Date(
+      calAnchor.getFullYear(),
+      calAnchor.getMonth(),
+      1
+    );
+    const lead = (mStart.getDay() + 6) % 7;
+    start = dateAdd(mStart, -lead);
+    days = 42;
+  }
 
   $("cal-title").textContent = fmtTitle(calAnchor);
-  grid.innerHTML="";
+  grid.innerHTML = "";
 
-  for(let i=0;i<days;i++){
+  for (let i = 0; i < days; i++) {
     const day = dateAdd(start, i);
     const cell = document.createElement("div");
     cell.className = "cal-cell";
     cell.dataset.date = ymd(day);
-    cell.innerHTML = `<div class="cal-cell-head">${day.getDate()}</div><div class="cal-cell-body"></div>`;
-    cell.ondragover = ev => ev.preventDefault();
-    cell.ondrop = ev => {
+    cell.innerHTML = `
+      <div class="cal-cell-head">${day.getDate()}</div>
+      <div class="cal-cell-body"></div>
+    `;
+
+    cell.ondragover = (ev) => ev.preventDefault();
+    cell.ondrop = (ev) => {
       ev.preventDefault();
       const loadId = ev.dataTransfer.getData("text/plain");
-      const t = appState.truckloads.find(x=>x.loadId===loadId);
-      if(!t) return;
+      const t = appState.truckloads.find((x) => x.loadId === loadId);
+      if (!t) return;
+
       const targetDate = cell.dataset.date;
-      const win = (t.pickupWindow||"").trim() || "(unspecified)";
+      const win = (t.pickupWindow || "").trim() || "(unspecified)";
       const limit = getSlotLimit(win, t.loadType);
-      const same = appState.truckloads.filter(l => l.pickupDate === targetDate && l.loadType === t.loadType && ((l.pickupWindow||"").trim() || "(unspecified)") === win);
-      if (same.length >= limit){
-        showSuggestionModal({ reason:`Move blocked. Time block "${win}" on ${targetDate} is full`, rows: [] });
+      const same = appState.truckloads.filter(
+        (l) =>
+          l.pickupDate === targetDate &&
+          l.loadType === t.loadType &&
+          ((l.pickupWindow || "").trim() || "(unspecified)") === win
+      );
+
+      if (same.length >= limit) {
+        showSuggestionModal({
+          reason: `Move blocked. Time block "${win}" on ${targetDate} is full`,
+          rows: []
+        });
         return;
       }
+
       t.pickupDate = targetDate;
-      saveState(); renderAll();
+      saveState();
+      renderAll();
     };
 
-    const items = appState.truckloads.filter(t=>t.pickupDate && sameDate(t.pickupDate, day))
-      .filter(t=> !filter || (t.customer||"").toLowerCase().includes(filter) || (t.carrier||"").toLowerCase().includes(filter));
+    const items = appState.truckloads
+      .filter((t) => t.pickupDate && sameDate(t.pickupDate, day))
+      .filter(
+        (t) =>
+          !filter ||
+          (t.customer || "")
+            .toLowerCase()
+            .includes(filter) ||
+          (t.carrier || "")
+            .toLowerCase()
+            .includes(filter)
+      );
 
     const body = cell.querySelector(".cal-cell-body");
-    items.forEach(t=>{
-      const chip=document.createElement("div");
-      chip.className="cal-chip";
-      chip.draggable=true;
-      chip.ondragstart=(ev)=>ev.dataTransfer.setData("text/plain", t.loadId);
+
+    items.forEach((t) => {
+      const chip = document.createElement("div");
+      chip.className = "cal-chip";
+      chip.draggable = true;
+      chip.ondragstart = (ev) =>
+        ev.dataTransfer.setData("text/plain", t.loadId);
+
       const time = t.pickupWindow ? `${t.pickupWindow} | ` : "";
-      chip.textContent = `${time}${t.customer||""} | ${t.carrier||""}`;
-      chip.title = `${t.loadId}\n${t.pickupDate} ${t.pickupWindow||""}\n${t.customer||""} | ${t.carrier||""}`;
-      chip.onclick = ()=>{
-        const row = document.querySelector(`.tl-row[data-id="${t.loadId}"]`);
-        if(row) row.click();
+      chip.textContent = `${time}${t.customer || ""} | ${
+        t.carrier || ""
+      }`;
+      chip.title = `${t.loadId}\n${t.pickupDate} ${
+        t.pickupWindow || ""
+      }\n${t.customer || ""} | ${t.carrier || ""}`;
+      chip.onclick = () => {
+        const row = document.querySelector(
+          `.tl-row[data-id="${t.loadId}"]`
+        );
+        if (row) row.click();
       };
       body.appendChild(chip);
     });
@@ -1101,19 +1945,54 @@ function renderCalendar(){
     grid.appendChild(cell);
   }
 }
-if ($("cal-prev")) $("cal-prev").onclick=()=>{ const v=$("cal-view").value; calAnchor = v==="wk"?dateAdd(calAnchor,-7):v==="2w"?dateAdd(calAnchor,-14):new Date(calAnchor.getFullYear(), calAnchor.getMonth()-1, 1); renderCalendar(); };
-if ($("cal-next")) $("cal-next").onclick=()=>{ const v=$("cal-view").value; calAnchor = v==="wk"?dateAdd(calAnchor,7):v==="2w"?dateAdd(calAnchor,14):new Date(calAnchor.getFullYear(), calAnchor.getMonth()+1, 1); renderCalendar(); };
-if ($("cal-view")) $("cal-view").onchange=renderCalendar;
-if ($("cal-filter")) $("cal-filter").oninput=renderCalendar;
+
+if ($("cal-prev"))
+  $("cal-prev").onclick = () => {
+    const v = $("cal-view").value;
+    calAnchor =
+      v === "wk"
+        ? dateAdd(calAnchor, -7)
+        : v === "2w"
+        ? dateAdd(calAnchor, -14)
+        : new Date(
+            calAnchor.getFullYear(),
+            calAnchor.getMonth() - 1,
+            1
+          );
+    renderCalendar();
+  };
+
+if ($("cal-next"))
+  $("cal-next").onclick = () => {
+    const v = $("cal-view").value;
+    calAnchor =
+      v === "wk"
+        ? dateAdd(calAnchor, 7)
+        : v === "2w"
+        ? dateAdd(calAnchor, 14)
+        : new Date(
+            calAnchor.getFullYear(),
+            calAnchor.getMonth() + 1,
+            1
+          );
+    renderCalendar();
+  };
+
+if ($("cal-view")) $("cal-view").onchange = renderCalendar;
+if ($("cal-filter")) $("cal-filter").oninput = renderCalendar;
 
 // ========= SETTINGS EXTRAS: Clear Saved Data =========
-(function injectClearButton(){
+(function injectClearButton() {
   const settings = document.querySelector("#tab-settings .pane-header");
-  if(!settings || document.getElementById("clear-saved-btn")) return;
+  if (!settings || document.getElementById("clear-saved-btn")) return;
   const b = document.createElement("button");
-  b.id="clear-saved-btn"; b.className="btn small danger"; b.textContent="Clear Saved Data";
-  b.onclick = ()=>{
-    if(confirm("This will remove all saved state on this browser.")){
+  b.id = "clear-saved-btn";
+  b.className = "btn small danger";
+  b.textContent = "Clear Saved Data";
+  b.onclick = () => {
+    if (
+      confirm("This will remove all saved state on this browser.")
+    ) {
       localStorage.removeItem(STORAGE_KEY);
       indexedDB.deleteDatabase("ncdcDB");
       location.reload();
@@ -1123,49 +2002,85 @@ if ($("cal-filter")) $("cal-filter").oninput=renderCalendar;
 })();
 
 // ========= NIGHTLY HISTORY ARCHIVAL =========
-function sweepHistoryIfMidnight(){
+function sweepHistoryIfMidnight() {
   const localYmd = todayYMD();
   if (appState.settings.lastHistorySweepYMD === localYmd) return;
-  appState.truckloads.filter(t=>t.status==="Departed" && t.pickupDate && t.pickupDate < localYmd).forEach(t=>{
-    if(!appState.history.find(h=>h.loadId===t.loadId)) appState.history.push({ loadId:t.loadId, customer:t.customer, carrier:t.carrier, pickupDate:t.pickupDate, pickupWindow:t.pickupWindow, status:"Departed" });
-  });
-  appState.settings.lastHistorySweepYMD = localYmd; saveState(); renderHistory();
+
+  appState.truckloads
+    .filter(
+      (t) =>
+        t.status === "Departed" &&
+        t.pickupDate &&
+        t.pickupDate < localYmd
+    )
+    .forEach((t) => {
+      if (
+        !appState.history.find((h) => h.loadId === t.loadId)
+      ) {
+        appState.history.push({
+          loadId: t.loadId,
+          customer: t.customer,
+          carrier: t.carrier,
+          pickupDate: t.pickupDate,
+          pickupWindow: t.pickupWindow,
+          status: "Departed"
+        });
+      }
+    });
+
+  appState.settings.lastHistorySweepYMD = localYmd;
+  saveState();
+  renderHistory();
 }
-setInterval(sweepHistoryIfMidnight, 60*1000);
 
-// ========= RENDER ALL + CORRECT BOOTSTRAP ORDER =========
+setInterval(sweepHistoryIfMidnight, 60 * 1000);
 
-// Boot sequence correction:
+// ========= RENDER ALL + BOOT SEQUENCE =========
+function renderAll() {
+  renderOrders(true);
+  renderTruckloads();
+  renderDock();
+  renderTodays();
+  renderHistory();
+  renderMetrics();
+}
+
+// Boot sequence:
 // 1) Load LocalStorage
-// 2) Load IndexedDB (if exists, overwrites LocalStorage copy)
-// 3) THEN render for the first time
-// 4) Only after render do we allow saveState() to run again
+// 2) Load IndexedDB (if exists, overwrite)
+// 3) Compute derived fields
+// 4) Auto-login if needed
+// 5) First render
+// 6) Sweep history
+// 7) Persist
 
-(async function boot(){
-  // Step 1: Load LocalStorage
+(async function boot() {
+  // Step 1: LocalStorage
   loadStateSync();
 
-  // Step 2: Load IndexedDB (if available)
+  // Step 2: IndexedDB (if any)
   const idbState = await idbGet(STORAGE_KEY);
   if (idbState) {
     Object.assign(appState, idbState);
   }
 
-  // Step 3: Compute missing derived fields
-  appState.orders = (appState.orders||[]).map(o =>
+  // Step 3: ensure derived fields exist
+  appState.orders = (appState.orders || []).map((o) =>
     o.__shipBy ? o : computeOrderDerived(o)
   );
 
-  // Step 4: Auto-login if session stored
-  if(appState.session?.authed){
+  // Step 4: Auto-login
+  if (appState.session?.authed) {
     $("login-screen").classList.add("hidden");
     $("app-shell").classList.remove("hidden");
   }
 
-  // Step 5: FIRST RENDER (no overwriting storage)
+  // Step 5: initial render
   renderAll();
+
+  // Step 6: history sweep
   sweepHistoryIfMidnight();
 
-  // Step 6: Only after first render do we allow saves again
+  // Step 7: persist current state snapshot
   saveState();
 })();
