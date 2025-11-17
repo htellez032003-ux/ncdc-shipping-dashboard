@@ -25,12 +25,12 @@
   <div id="app-shell" class="app-shell hidden">
     <aside class="sidebar">
       <div class="sidebar-header">
-  <img class="logo-img" src="./assets/lt_apparel_group_logo.png" alt="LT Apparel Group" />
-  <div>
-    <div class="sidebar-title">NCDC Dashboard</div>
-    <div class="sidebar-sub">Shipping</div>
-  </div>
-</div>
+        <img class="logo-img" src="./assets/lt_apparel_group_logo.png" alt="LT Apparel Group" />
+        <div>
+          <div class="sidebar-title">NCDC Dashboard</div>
+          <div class="sidebar-sub">Shipping</div>
+        </div>
+      </div>
       <nav>
         <button data-tab="orders" class="nav-link active">Orders</button>
         <button data-tab="dock" class="nav-link">Dock</button>
@@ -192,9 +192,18 @@
           <p>Rolling summary for staging and pickups.</p>
         </header>
         <div class="metrics-row">
-          <div class="metric-card"><div class="metric-label">Total Loads (month)</div><div class="metric-value" id="m-total-loads">0</div></div>
-          <div class="metric-card"><div class="metric-label">Total Cartons</div><div class="metric-value" id="m-cartons">0</div></div>
-          <div class="metric-card"><div class="metric-label">Fully Staged</div><div class="metric-value" id="m-staged">0</div></div>
+          <div class="metric-card">
+            <div class="metric-label">Total Loads (month)</div>
+            <div class="metric-value" id="m-total-loads">0</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Total Cartons</div>
+            <div class="metric-value" id="m-cartons">0</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Fully Staged</div>
+            <div class="metric-value" id="m-staged">0</div>
+          </div>
         </div>
         <div id="metrics-chart" class="chart-placeholder"></div>
       </section>
@@ -305,7 +314,7 @@
   <!-- CREATE / UPDATE TRUCKLOAD MODAL -->
   <div id="modal-overlay" class="modal-overlay hidden">
     <div class="modal">
-      <h3>Create Truckload</h3>
+      <h3 id="tl-modal-title">Create Truckload</h3>
       <p id="modal-selected-pos"></p>
       <label>Load ID</label><input id="tl-load-id" type="text" />
       <label>Load Type</label>
@@ -344,6 +353,94 @@
       <div class="modal-actions">
         <button id="tl-detail-save" class="btn primary tiny">Save</button>
         <button id="tl-detail-close" class="btn secondary tiny">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- DOCK STAGING / HISTORY MODAL (OPTION C) -->
+  <div id="dock-modal-overlay" class="modal-overlay hidden">
+    <div class="modal modal-wide">
+      <h3>Dock Staging &amp; Loading</h3>
+      <div id="dock-modal-header" class="dock-modal-header">
+        <div>
+          <div class="dock-modal-load">
+            <span class="label">Load ID:</span>
+            <span id="dock-modal-load-id"></span>
+          </div>
+          <div class="dock-modal-line">
+            <span class="label">Customer:</span>
+            <span id="dock-modal-customer"></span>
+          </div>
+          <div class="dock-modal-line">
+            <span class="label">Carrier:</span>
+            <span id="dock-modal-carrier"></span>
+          </div>
+        </div>
+        <div>
+          <div class="dock-modal-line">
+            <span class="label">Type:</span>
+            <span id="dock-modal-type"></span>
+          </div>
+          <div class="dock-modal-line">
+            <span class="label">Pickup Date:</span>
+            <span id="dock-modal-pickup-date"></span>
+          </div>
+          <div class="dock-modal-line">
+            <span class="label">Window:</span>
+            <span id="dock-modal-window"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="dock-modal-grid">
+        <!-- CURRENT STAGING STATE -->
+        <section class="dock-modal-section">
+          <h4>Current Staging</h4>
+          <label>Staged Location / Door</label>
+          <input id="dock-modal-location" class="input" placeholder="e.g. Door 15, Lane B" />
+
+          <label>Actual Pallets</label>
+          <input id="dock-modal-actual-pallets" class="input" type="number" min="0" />
+
+          <label>Assigned To</label>
+          <input id="dock-modal-assigned-to" class="input" placeholder="Lead / Loader name(s)" />
+
+          <label>Status</label>
+          <select id="dock-modal-status" class="input">
+            <option value="planned">Planned</option>
+            <option value="staging">Staging</option>
+            <option value="staged">Staged</option>
+            <option value="loading">Loading</option>
+            <option value="loaded">Loaded</option>
+            <option value="departed">Departed</option>
+          </select>
+
+          <label>Notes</label>
+          <textarea id="dock-modal-notes" class="input" rows="3" placeholder="Damage, over/short, dock changes, etc."></textarea>
+
+          <div class="modal-actions">
+            <button id="dock-modal-save" class="btn primary tiny">Save Update</button>
+            <button id="dock-modal-close" class="btn secondary tiny">Close</button>
+          </div>
+        </section>
+
+        <!-- STAGING / LOADING HISTORY -->
+        <section class="dock-modal-section">
+          <h4>Staging &amp; Loading History</h4>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Event</th>
+                <th>User</th>
+                <th>Location</th>
+                <th>Pallets</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody id="dock-modal-history"></tbody>
+          </table>
+        </section>
       </div>
     </div>
   </div>
