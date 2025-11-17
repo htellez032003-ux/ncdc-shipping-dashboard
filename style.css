@@ -62,9 +62,22 @@ tbody tr:hover{background:#f7fbff}
 
 .orders-grid{overflow:auto;max-height:60vh}
 
-/* Row state highlights (from automation) */
+/* generic data-table wrapper */
+.data-table{
+  width:100%;
+  border-collapse:separate;
+  border-spacing:0;
+}
+.data-table thead th{
+  position:static;
+  background:#f9fafb;
+}
+
+/* Row state highlights */
 .row-danger{background:#ffe8ea}
 .row-warn{background:#fff6dc}
+.row-arrived{background:#e0f2fe}
+.row-departed{background:#e5e7eb}
 
 /* ===== Chips, inputs ===== */
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
@@ -72,7 +85,7 @@ tbody tr:hover{background:#f7fbff}
 .chip .chip-x{all:unset;cursor:pointer;padding:0 4px;color:#0f172a}
 
 /* Inputs */
-.input,.input-slim, input[type="text"], input[type="date"], input[type="number"], select{
+.input,.input-slim, input[type="text"], input[type="date"], input[type="number"], select, textarea{
   border:1px solid var(--border);border-radius:8px;padding:8px 10px;background:#fff;color:var(--text);
 }
 .input-slim{padding:6px 8px}
@@ -99,9 +112,41 @@ tbody tr:hover{background:#f7fbff}
   width:min(820px,95vw);max-height:85vh;overflow:auto;background:var(--card);
   border:1px solid var(--border-strong);border-radius:14px;padding:16px 18px;box-shadow:0 10px 30px rgba(0,0,0,.25);
 }
+.modal-wide{
+  width:min(1040px,95vw);
+}
 .modal h3{margin:0 0 10px 0;color:var(--navy)}
 .modal h4{margin:14px 0 8px 0}
 .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+
+/* Dock staging modal layout */
+.dock-modal-header{
+  display:flex;
+  justify-content:space-between;
+  gap:16px;
+  margin-bottom:12px;
+  font-size:13px;
+}
+.dock-modal-load{font-weight:600;font-size:14px;margin-bottom:4px}
+.dock-modal-line{margin-bottom:2px}
+.dock-modal-header .label{
+  font-size:11px;
+  text-transform:uppercase;
+  letter-spacing:.03em;
+  color:var(--muted);
+}
+
+.dock-modal-grid{
+  display:grid;
+  grid-template-columns:minmax(260px,1fr) minmax(340px,1.3fr);
+  gap:12px;
+}
+.dock-modal-section{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:10px;
+}
 
 /* ===== Suggestion modal specifics ===== */
 .slots-grid{display:flex;flex-wrap:wrap;gap:8px}
@@ -149,12 +194,13 @@ tbody tr:hover{background:#f7fbff}
 .team-list{list-style:none;margin:0;padding:0}
 .team-list li{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px}
 
-/* ===== Scrollbars (nice but minimal) ===== */
+/* ===== Scrollbars ===== */
 .orders-grid::-webkit-scrollbar,
 .modal::-webkit-scrollbar{height:10px;width:10px}
 .orders-grid::-webkit-scrollbar-thumb,
 .modal::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:10px}
 
+/* ===== Badges ===== */
 .badge {
   display: inline-flex;
   align-items: center;
@@ -166,10 +212,19 @@ tbody tr:hover{background:#f7fbff}
   height: 18px;
   margin-left: 4px;
 }
-
 .badge-warn {
   background: #fff4ce;
   color: #946200;
   border: 1px solid #f0d97a;
 }
+.badge-info{
+  background:#e0f2fe;
+  color:#075985;
+  border:1px solid #bfdbfe;
+}
 
+/* ===== Misc helpers ===== */
+.muted{color:var(--muted);font-size:12px}
+.mb{margin-bottom:8px}
+.ul-compact{margin:4px 0 0 18px;padding:0;font-size:12px}
+.ul-compact li{margin-bottom:2px}
