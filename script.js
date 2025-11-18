@@ -1,5 +1,5 @@
-// NCDC Shipping Dashboard - Full JavaScript
-// Version 2.0 with all 15 enhancements
+// NCDC Shipping Dashboard - Full JavaScript (Revised)
+// Version 2.1 — capacity validation, conflict prevention, safer persistence
 
 /* ========= CONSTANTS ========= */
 const STORAGE_KEY = "ncdcShippingStateV10";
@@ -32,6 +32,9 @@ const USER_ROLES = {
   dock: { label: "Dock Lead", permissions: ["dock", "todays", "truckloads", "history"] },
   supervisor: { label: "Supervisor", permissions: ["all"] }
 };
+
+// Fields that CSV is NOT allowed to overwrite once set in dashboard
+const CSV_PROTECTED_FIELDS = ["Load ID", "Ready Date"];
 
 /* ========= STATE ========= */
 const appState = {
@@ -114,6 +117,56 @@ const isSPSCarrier = (carrier) => {
   return c.includes("UPS") || c.includes("FXG") || c.includes("FEDEX GROUND") || c.includes("SPS");
 };
 
+function getMaxForType(loadType) {
+  if (loadType === "Truckload") return appState.settings.maxTL || 0;
+  if (loadType === "Floorload") return appState.settings.maxFloor || 0;
+  // Treat LTL + Small Parcel under LTL cap
+  return appState.settings.maxLTL || 0;
+}
+
+function countLoadsForSlot(date, window, loadType, ignoreLoadId) {
+  return appState.truckloads.filter(t =>
+    t.pickupDate === date &&
+    t.pickupWindow === window &&
+    t.loadType === loadType &&
+    t.loadId !== ignoreLoadId
+  ).length;
+}
+
+function canScheduleLoad(date, window, loadType, ignoreLoadId) {
+  if (!date || !window || !loadType) return { ok: true, used: 0, max: 0 };
+  const max = getMaxForType(loadType);
+  if (!max) return { ok: true, used: 0, max: 0 }; // no limit defined
+  const used = countLoadsForSlot(date, window, loadType, ignoreLoadId);
+  return { ok: used < max, used, max };
+}
+
+function generateLoadId(date, loadType) {
+  const d = (date || todayYMD()).replace(/-/g, "");
+  const type = loadType || "Truckload";
+  let prefix = "TL";
+  if (type === "LTL") prefix = "LTL";
+  else if (type === "Floorload") prefix = "FL";
+  else if (type === "Small Parcel") prefix = "SP";
+
+  const sameTypeSameDay = appState.truckloads.filter(t =>
+    (t.loadType || type) === type &&
+    (t.pickupDate || "").replace(/-/g, "") === d
+  );
+  const seq = sameTypeSameDay.length + 1;
+  const seqStr = String(seq).padStart(3, "0");
+  return `${prefix}-${d}-${seqStr}`;
+}
+
+function appendStagingLog(truck, entry) {
+  if (!truck) return;
+  if (!Array.isArray(truck.stagingLog)) truck.stagingLog = [];
+  truck.stagingLog.push(entry);
+  if (truck.stagingLog.length > 200) {
+    truck.stagingLog = truck.stagingLog.slice(-200);
+  }
+}
+
 /* ========= STORAGE ========= */
 function loadState() {
   try {
@@ -122,6 +175,12 @@ function loadState() {
       const data = JSON.parse(stored);
       Object.assign(appState, data);
     }
+    // Recompute derived fields if missing/old
+    appState.orders = (appState.orders || []).map(o => computeOrderDerived(o));
+    // Ensure logs are arrays
+    appState.truckloads.forEach(t => {
+      if (!Array.isArray(t.stagingLog)) t.stagingLog = [];
+    });
   } catch (e) {
     console.error("Load error:", e);
   }
@@ -153,7 +212,7 @@ function logChange(action, details = {}) {
 function checkAlerts() {
   const alerts = [];
   const today = todayYMD();
-  
+
   // Overdue orders
   appState.orders.forEach(o => {
     if (o.__priority === "HIGH" && !o["Load ID"]) {
@@ -164,22 +223,22 @@ function checkAlerts() {
       });
     }
   });
-  
-  // Time blocks near capacity
+
+  // Time blocks near capacity (simple warning, not per type)
   TIME_BLOCKS.forEach(block => {
-    const used = appState.truckloads.filter(t => 
+    const used = appState.truckloads.filter(t =>
       t.pickupDate === today && t.pickupWindow === block.window
     ).length;
     if (used >= 3) {
       alerts.push({
         id: `capacity-${block.window}`,
         type: "warning",
-        message: `${block.label} is near capacity (${used}/4)`
+        message: `${block.label} is near capacity (${used} loads)`
       });
     }
   });
-  
-  // Trucks without staging
+
+  // Trucks without staging today
   appState.truckloads.forEach(t => {
     if (sameDate(t.pickupDate, today) && !t.stagedLocationSL && !t.stagedLocationDD && t.status !== "Departed") {
       alerts.push({
@@ -189,7 +248,7 @@ function checkAlerts() {
       });
     }
   });
-  
+
   appState.alerts = alerts;
   updateAlertsBadge();
 }
@@ -197,7 +256,7 @@ function checkAlerts() {
 function updateAlertsBadge() {
   const badge = $("alerts-badge");
   const countEl = $("alerts-count");
-  
+
   if (appState.alerts.length > 0) {
     badge.classList.remove("hidden");
     const errors = appState.alerts.filter(a => a.type === "error").length;
@@ -213,7 +272,7 @@ function handleLogin() {
   const email = $("login-email").value.trim();
   const pass = $("login-password").value.trim();
   const role = $("login-role").value;
-  
+
   if (email === "htellez032003@gmail.com" && pass === "Ltapaprel040523") {
     appState.session = { authed: true, email, role };
     $("login-error").classList.add("hidden");
@@ -223,6 +282,7 @@ function handleLogin() {
     applyRolePermissions();
     saveState();
     renderAll();
+    checkAlerts();
   } else {
     $("login-error").classList.remove("hidden");
   }
@@ -244,7 +304,7 @@ function applyRolePermissions() {
   const role = appState.session.role;
   const perms = USER_ROLES[role]?.permissions || [];
   const hasAll = perms.includes("all");
-  
+
   document.querySelectorAll(".nav-link").forEach(btn => {
     const tab = btn.dataset.tab;
     if (hasAll || perms.includes(tab) || tab === "team" || tab === "settings") {
@@ -261,7 +321,7 @@ function setupNavigation() {
       document.querySelectorAll(".nav-link").forEach(x => x.classList.remove("active"));
       btn.classList.add("active");
       const tab = btn.dataset.tab;
-      document.querySelectorAll(".tab-panel").forEach(p => 
+      document.querySelectorAll(".tab-panel").forEach(p =>
         p.classList.toggle("hidden", p.id !== "tab-" + tab)
       );
       if (tab === "calendar") renderCalendar();
@@ -271,11 +331,56 @@ function setupNavigation() {
   });
 }
 
-/* ========= CSV UPLOAD ========= */
+/* ========= CSV PARSER / UPLOAD ========= */
+
+function parseCSVLine(line) {
+  const result = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === ',' && !inQuotes) {
+      result.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  result.push(cur);
+  return result.map(v => v.trim());
+}
+
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) return [];
+
+  const headers = parseCSVLine(lines[0]).map(h => h.replace(/^"|"$/g, ''));
+  const rows = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const values = parseCSVLine(lines[i]).map(v => v.replace(/^"|"$/g, ''));
+    if (values.length === 1 && !values[0]) continue;
+    const obj = {};
+    headers.forEach((h, idx) => {
+      obj[h] = values[idx] || "";
+    });
+    rows.push(obj);
+  }
+
+  return rows;
+}
+
 function handleCSVUpload(e) {
   const file = e.target.files[0];
   if (!file) return;
-  
+
   const reader = new FileReader();
   reader.onload = (ev) => {
     const text = ev.target.result;
@@ -290,65 +395,50 @@ function handleCSVUpload(e) {
   reader.readAsText(file);
 }
 
-function parseCSV(text) {
-  const lines = text.split('\n').filter(l => l.trim());
-  if (lines.length < 2) return [];
-  
-  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
-  const rows = [];
-  
-  for (let i = 1; i < lines.length; i++) {
-    const values = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''));
-    const obj = {};
-    headers.forEach((h, idx) => {
-      obj[h] = values[idx] || "";
-    });
-    rows.push(obj);
-  }
-  
-  return rows;
-}
-
 function computeOrderDerived(order) {
-  const units = parseFloat(String(order.Units || 0).replace(/,/g, "")) || 0;
-  const cartons = parseFloat(String(order.Cartons || 0).replace(/,/g, "")) || 0;
-  
+  const units = parseFloat(String(order.Units || order.units || 0).replace(/,/g, "")) || 0;
+  const cartons = parseFloat(String(order.Cartons || order.cartons || 0).replace(/,/g, "")) || 0;
+
   order.__units = units;
   order.__cartons = cartons;
-  
+
   const startDate = parseYMD(order["Start Date"]);
   const cancelDate = parseYMD(order["Cancel Date"]);
-  
+
   let shipBy = startDate || cancelDate || new Date();
   order.__shipBy = ymd(shipBy);
   order.__recommendedShip = cancelDate && shipBy > cancelDate ? ymd(cancelDate) : order.__shipBy;
-  
+
   const today = new Date(todayYMD());
   const sb = parseYMD(order.__shipBy);
   order.__priority = sb <= today ? "HIGH" : sb <= addDays(today, 1) ? "MEDIUM" : "LOW";
   order.__isSPS = isSPSCarrier(order.Carrier);
-  
+
   return order;
 }
 
 function mergeOrders(newOrders) {
   const keyFor = (o) => (o.PO || "").trim() || `${o.BOL}|${o.Customer}|${o.Units}`;
   const map = new Map(appState.orders.map(o => [keyFor(o), o]));
-  
+
   newOrders.forEach(nr => {
     const k = keyFor(nr);
     if (map.has(k)) {
       const cur = map.get(k);
-      const merged = { ...cur, ...nr,
-        "Ready Date": cur["Ready Date"] || nr["Ready Date"],
-        "Load ID": cur["Load ID"] || nr["Load ID"]
-      };
-      map.set(k, computeOrderDerived(merged));
+      let merged = { ...cur, ...nr };
+
+      // Protect dashboard-owned fields from being overwritten by CSV
+      CSV_PROTECTED_FIELDS.forEach(f => {
+        if (cur[f]) merged[f] = cur[f];
+      });
+
+      merged = computeOrderDerived(merged);
+      map.set(k, merged);
     } else {
       map.set(k, computeOrderDerived(nr));
     }
   });
-  
+
   appState.orders = [...map.values()];
   saveState();
 }
@@ -357,34 +447,38 @@ function mergeOrders(newOrders) {
 function renderOrders() {
   const tb = $("orders-body");
   if (!tb) return;
-  
+
   const q = ($("orders-search")?.value || "").toLowerCase();
-  
+
   filteredOrders = appState.orders.filter(o => {
-    const quick = Object.values(o).some(v => 
+    const quick = Object.values(o).some(v =>
       String(v || "").toLowerCase().includes(q)
     );
     if (!quick) return false;
-    
+
     for (const f of dynamicFilters) {
-      if (String(o[f.col] || "") !== f.value) return false;
+      if (f.col === "__unassigned") {
+        if (o["Load ID"]) return false;
+      } else if (String(o[f.col] || "") !== f.value) {
+        return false;
+      }
     }
     return true;
   });
-  
+
   tb.innerHTML = "";
-  
+
   filteredOrders.forEach(o => {
     const po = o.PO || "";
     const tr = document.createElement("tr");
-    
-    const rowClass = o.__priority === "HIGH" ? "row-danger" : 
-                     o.__priority === "MEDIUM" ? "row-warn" : "";
+
+    const rowClass = o.__priority === "HIGH" ? "row-danger" :
+      o.__priority === "MEDIUM" ? "row-warn" : "";
     tr.className = rowClass;
-    
+
     const priorityBadge = `<span class="priority-badge priority-${o.__priority.toLowerCase()}">${o.__priority}</span>`;
     const spsBadge = o.__isSPS ? '<span class="sps-badge">SPS</span>' : '';
-    
+
     tr.innerHTML = `
       <td><input type="checkbox" class="po-check" data-po="${po}" ${selectedPOs.has(po) ? "checked" : ""}></td>
       <td>${po}</td>
@@ -401,7 +495,7 @@ function renderOrders() {
     `;
     tb.appendChild(tr);
   });
-  
+
   // Attach checkbox handlers
   document.querySelectorAll(".po-check").forEach(chk => {
     chk.onchange = (e) => {
@@ -411,7 +505,7 @@ function renderOrders() {
       $("selected-count").textContent = selectedPOs.size;
     };
   });
-  
+
   $("selected-count").textContent = selectedPOs.size;
   updateAssignDropdown();
 }
@@ -420,7 +514,7 @@ function updateAssignDropdown() {
   const sel = $("assign-existing-load");
   if (sel) {
     sel.innerHTML = `<option value="">Assign to existing...</option>` +
-      appState.truckloads.map(t => 
+      appState.truckloads.map(t =>
         `<option value="${t.loadId}">${t.loadId} — ${t.customer || ""}</option>`
       ).join("");
   }
@@ -430,60 +524,16 @@ function updateAssignDropdown() {
 function applyQuickFilter(type) {
   dynamicFilters.length = 0;
   $("orders-search").value = "";
-  
+
   if (type === "high") {
     dynamicFilters.push({ col: "__priority", value: "HIGH" });
   } else if (type === "unassigned") {
-    // Will filter in render
-    filteredOrders = appState.orders.filter(o => !o["Load ID"]);
-    renderOrdersFiltered(filteredOrders);
-    return;
+    dynamicFilters.push({ col: "__unassigned", value: "1" });
   } else if (type === "today") {
     dynamicFilters.push({ col: "__shipBy", value: todayYMD() });
   }
-  
-  renderOrders();
-}
 
-function renderOrdersFiltered(orders) {
-  const tb = $("orders-body");
-  tb.innerHTML = "";
-  
-  orders.forEach(o => {
-    const po = o.PO || "";
-    const tr = document.createElement("tr");
-    const rowClass = o.__priority === "HIGH" ? "row-danger" : 
-                     o.__priority === "MEDIUM" ? "row-warn" : "";
-    tr.className = rowClass;
-    
-    const priorityBadge = `<span class="priority-badge priority-${o.__priority.toLowerCase()}">${o.__priority}</span>`;
-    const spsBadge = o.__isSPS ? '<span class="sps-badge">SPS</span>' : '';
-    
-    tr.innerHTML = `
-      <td><input type="checkbox" class="po-check" data-po="${po}" ${selectedPOs.has(po) ? "checked" : ""}></td>
-      <td>${po}</td>
-      <td>${o.Customer || ""}</td>
-      <td>${o.Carrier || ""}${spsBadge}</td>
-      <td>${o.Units || ""}</td>
-      <td>${o.Cartons || ""}</td>
-      <td>${o.BOL || ""}</td>
-      <td>${o["Master BOL"] || ""}</td>
-      <td>${o["Start Date"] || ""}</td>
-      <td>${o["Cancel Date"] || ""}</td>
-      <td>${priorityBadge}</td>
-      <td>${o["Load ID"] || "-"}</td>
-    `;
-    tb.appendChild(tr);
-  });
-  
-  document.querySelectorAll(".po-check").forEach(chk => {
-    chk.onchange = (e) => {
-      const po = e.target.dataset.po;
-      if (e.target.checked) selectedPOs.add(po);
-      else selectedPOs.delete(po);
-      $("selected-count").textContent = selectedPOs.size;
-    };
-  });
+  renderOrders();
 }
 
 /* ========= TRUCKLOAD CREATION ========= */
@@ -492,31 +542,49 @@ function showCreateTruckModal() {
     alert("Select at least one PO.");
     return;
   }
-  
+
   const rows = appState.orders.filter(o => selectedPOs.has(o.PO));
-  
+  const defaultDate = earliestDate(rows.map(r => r.__recommendedShip)) || todayYMD();
+
   $("modal-selected-pos").textContent = `POs: ${[...selectedPOs].slice(0, 5).join(", ")}${selectedPOs.size > 5 ? "..." : ""}`;
-  $("tl-load-id").value = `LOAD-${Date.now()}`;
   $("tl-load-type").value = "Truckload";
-  $("tl-pickup-date").value = earliestDate(rows.map(r => r.__recommendedShip));
+  $("tl-pickup-date").value = defaultDate;
   $("tl-pickup-window").value = TIME_BLOCKS[0].window;
   $("tl-carrier").value = mostCommon(rows.map(r => r.Carrier));
   $("tl-customer").value = mostCommon(rows.map(r => r.Customer));
   $("tl-bol").value = mostCommon(rows.map(r => r.BOL));
-  
+  $("tl-load-id").value = generateLoadId(defaultDate, "Truckload");
+
   $("modal-overlay").classList.remove("hidden");
 }
 
 function saveTruckload() {
   const rows = appState.orders.filter(o => selectedPOs.has(o.PO));
-  
+  if (rows.length === 0) {
+    alert("No orders selected.");
+    return;
+  }
+
+  const loadType = $("tl-load-type").value;
+  const pickupDate = $("tl-pickup-date").value || todayYMD();
+  const pickupWindow = $("tl-pickup-window").value;
+  const capacity = canScheduleLoad(pickupDate, pickupWindow, loadType);
+
+  if (!capacity.ok) {
+    alert(`Cannot schedule this ${loadType} at ${pickupDate} ${pickupWindow} — capacity reached (${capacity.used}/${capacity.max}).`);
+    return;
+  }
+
+  const enteredId = $("tl-load-id").value.trim();
+  const loadId = enteredId || generateLoadId(pickupDate, loadType);
+
   const newTruck = {
-    loadId: $("tl-load-id").value.trim() || `LOAD-${Date.now()}`,
-    loadType: $("tl-load-type").value,
+    loadId,
+    loadType,
     customer: $("tl-customer").value.trim() || mostCommon(rows.map(r => r.Customer)),
     carrier: $("tl-carrier").value.trim() || mostCommon(rows.map(r => r.Carrier)),
-    pickupDate: $("tl-pickup-date").value,
-    pickupWindow: $("tl-pickup-window").value,
+    pickupDate,
+    pickupWindow,
     bol: $("tl-bol").value.trim() || mostCommon(rows.map(r => r.BOL)),
     masterBol: mostCommon(rows.map(r => r["Master BOL"])),
     cartons: sumNumber(rows, "Cartons"),
@@ -529,27 +597,29 @@ function saveTruckload() {
     status: "Not Started",
     departed: false,
     orders: rows.map(o => o.PO),
-    stagingLog: [{
-      ts: new Date().toISOString(),
-      action: "Truckload created",
-      user: appState.session.email,
-      note: `Created with ${rows.length} orders`
-    }],
+    stagingLog: [],
     createdAt: new Date().toISOString()
   };
-  
+
+  appendStagingLog(newTruck, {
+    ts: new Date().toISOString(),
+    action: "Truckload created",
+    user: appState.session.email,
+    note: `Created with ${rows.length} orders`
+  });
+
   appState.truckloads.push(newTruck);
-  
+
   // Update orders with Load ID
   appState.orders = appState.orders.map(o => {
     if (selectedPOs.has(o.PO)) {
       const current = (o["Load ID"] || "").split(",").map(x => x.trim()).filter(Boolean);
       if (!current.includes(newTruck.loadId)) current.push(newTruck.loadId);
-      return { ...o, "Load ID": current.join(", ") };
+      return { ...o, "Load ID": Array.from(new Set(current)).join(", ") };
     }
     return o;
   });
-  
+
   selectedPOs.clear();
   $("modal-overlay").classList.add("hidden");
   logChange("Truckload Created", { loadId: newTruck.loadId });
@@ -562,12 +632,12 @@ function runAutoRouter() {
   const ordersToRoute = selectedPOs.size > 0
     ? appState.orders.filter(o => selectedPOs.has(o.PO))
     : appState.orders.filter(o => !o["Load ID"]);
-  
+
   if (ordersToRoute.length === 0) {
     alert("No orders to route");
     return;
   }
-  
+
   autoProposals = buildAutoProposals(ordersToRoute);
   renderAutoRouteModal();
 }
@@ -576,23 +646,23 @@ function buildAutoProposals(ordersToRoute) {
   const proposals = [];
   const today = new Date(todayYMD());
   const plus2 = addDays(today, 2);
-  
+
   // Separate SPS
   const spsOrders = ordersToRoute.filter(o => o.__isSPS && parseYMD(o["Start Date"]) <= plus2);
   const regularOrders = ordersToRoute.filter(o => !o.__isSPS || parseYMD(o["Start Date"]) > plus2);
-  
-  // Build SPS trucks
+
+  // SPS trucks
   const spsByCarrier = new Map();
   spsOrders.forEach(o => {
     const key = `${o.Carrier}|${o.__recommendedShip}`;
     if (!spsByCarrier.has(key)) spsByCarrier.set(key, []);
     spsByCarrier.get(key).push(o);
   });
-  
+
   for (const [key, orders] of spsByCarrier) {
     const [carrier, date] = key.split('|');
     proposals.push({
-      id: `SPS-${Date.now()}-${proposals.length}`,
+      id: `SPS-PROP-${proposals.length + 1}`,
       type: "SPS",
       loadType: "Small Parcel",
       carrier,
@@ -605,24 +675,24 @@ function buildAutoProposals(ordersToRoute) {
       fill: 0
     });
   }
-  
-  // Build regular trucks by customer/carrier
+
+  // Regular trucks
   const byGroup = new Map();
   regularOrders.forEach(o => {
     const key = `${o.Customer}|${o.Carrier}`;
     if (!byGroup.has(key)) byGroup.set(key, []);
     byGroup.get(key).push(o);
   });
-  
+
   for (const [key, orders] of byGroup) {
     const [customer, carrier] = key.split('|');
     let remaining = [...orders];
-    
+
     while (remaining.length > 0) {
       const chunk = [];
       let units = 0;
       let cartons = 0;
-      
+
       for (const o of remaining) {
         if (units + o.__units <= MAX_UNITS_PER_TRUCK && cartons + o.__cartons <= MAX_CARTS_PER_TRUCK) {
           chunk.push(o);
@@ -630,15 +700,15 @@ function buildAutoProposals(ordersToRoute) {
           cartons += o.__cartons;
         }
       }
-      
+
       if (chunk.length === 0) chunk.push(remaining[0]);
       remaining = remaining.filter(o => !chunk.includes(o));
-      
+
       const date = earliestDate(chunk.map(o => o.__recommendedShip));
       const fill = Math.round(Math.min(units / MAX_UNITS_PER_TRUCK, cartons / MAX_CARTS_PER_TRUCK) * 100);
-      
+
       proposals.push({
-        id: `LOAD-${Date.now()}-${proposals.length}`,
+        id: `TRK-PROP-${proposals.length + 1}`,
         type: "Truckload",
         loadType: fill > 70 ? "Truckload" : "LTL",
         carrier,
@@ -652,21 +722,20 @@ function buildAutoProposals(ordersToRoute) {
       });
     }
   }
-  
+
   return proposals;
 }
 
 function renderAutoRouteModal() {
   const tb = $("auto-body");
   tb.innerHTML = "";
-  
+
   autoProposals.forEach(p => {
     const fillClass = p.fill >= 80 ? "fill-high" : p.fill >= 50 ? "fill-medium" : "fill-low";
-    
+
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><input type="checkbox" class="auto-check" data-id="${p.id}" checked></td>
-      <td>${p.id}</td>
       <td>${p.loadType}</td>
       <td>${p.customer}</td>
       <td>${p.carrier}</td>
@@ -688,9 +757,9 @@ function renderAutoRouteModal() {
     `;
     tb.appendChild(tr);
   });
-  
+
   $("auto-summary").textContent = `${autoProposals.length} proposed loads • ${autoProposals.reduce((s, p) => s + p.units, 0).toLocaleString()} units • ${autoProposals.reduce((s, p) => s + p.cartons, 0).toLocaleString()} cartons`;
-  
+
   $("auto-overlay").classList.remove("hidden");
 }
 
@@ -698,21 +767,33 @@ function confirmAutoRoute() {
   const selectedIds = new Set(
     [...document.querySelectorAll(".auto-check:checked")].map(c => c.dataset.id)
   );
-  
+
   const toCreate = autoProposals.filter(p => selectedIds.has(p.id));
-  
+  const skipped = [];
+
   toCreate.forEach(p => {
-    // Get edited values
     const dateInput = document.querySelector(`.auto-date[data-id="${p.id}"]`);
     const windowInput = document.querySelector(`.auto-window[data-id="${p.id}"]`);
-    
+
+    const pickupDate = dateInput?.value || p.date;
+    const pickupWindow = windowInput?.value || p.window;
+    const loadType = p.loadType;
+
+    const capacity = canScheduleLoad(pickupDate, pickupWindow, loadType);
+    if (!capacity.ok) {
+      skipped.push({ id: p.id, date: pickupDate, window: pickupWindow, type: loadType, cap: capacity });
+      return;
+    }
+
+    const loadId = generateLoadId(pickupDate, loadType);
+
     const newTruck = {
-      loadId: p.id,
-      loadType: p.loadType,
+      loadId,
+      loadType,
       customer: p.customer,
       carrier: p.carrier,
-      pickupDate: dateInput?.value || p.date,
-      pickupWindow: windowInput?.value || p.window,
+      pickupDate,
+      pickupWindow,
       bol: mostCommon(p.orders.map(o => o.BOL)),
       masterBol: mostCommon(p.orders.map(o => o["Master BOL"])),
       cartons: p.cartons,
@@ -723,48 +804,57 @@ function confirmAutoRoute() {
       status: "Not Started",
       departed: false,
       orders: p.orders.map(o => o.PO),
-      stagingLog: [{
-        ts: new Date().toISOString(),
-        action: "Created by Auto-Router",
-        user: appState.session.email,
-        note: `${p.orders.length} orders, ${p.fill}% fill`
-      }],
+      stagingLog: [],
       createdAt: new Date().toISOString()
     };
-    
+
+    appendStagingLog(newTruck, {
+      ts: new Date().toISOString(),
+      action: "Created by Auto-Router",
+      user: appState.session.email,
+      note: `${p.orders.length} orders, ${p.fill}% fill`
+    });
+
     appState.truckloads.push(newTruck);
-    
+
     // Update orders
     appState.orders = appState.orders.map(o => {
       if (p.orders.find(po => po.PO === o.PO)) {
         const current = (o["Load ID"] || "").split(",").map(x => x.trim()).filter(Boolean);
         if (!current.includes(newTruck.loadId)) current.push(newTruck.loadId);
-        return { ...o, "Load ID": current.join(", ") };
+        return { ...o, "Load ID": Array.from(new Set(current)).join(", ") };
       }
       return o;
     });
   });
-  
+
   $("auto-overlay").classList.add("hidden");
   selectedPOs.clear();
-  logChange("Auto-Route Completed", { count: toCreate.length });
+  logChange("Auto-Route Completed", { count: toCreate.length - skipped.length });
   renderAll();
   checkAlerts();
+
+  if (skipped.length > 0) {
+    const msg = skipped.map(s =>
+      `${s.type} at ${s.date} ${s.window} skipped — capacity ${s.cap.used}/${s.cap.max}`
+    ).join("\n");
+    alert("Some proposed loads were not created due to capacity limits:\n\n" + msg);
+  }
 }
 
 /* ========= DISCREPANCIES ========= */
 function renderDiscrepancies() {
   const tb = $("disc-body");
   if (!tb) return;
-  
+
   const discrepancies = detectDiscrepancies();
   tb.innerHTML = "";
-  
+
   if (discrepancies.length === 0) {
     tb.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:40px;color:#059669;">✓ No discrepancies detected</td></tr>`;
     return;
   }
-  
+
   discrepancies.forEach(d => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
@@ -781,7 +871,7 @@ function renderDiscrepancies() {
 
 function detectDiscrepancies() {
   const discrepancies = [];
-  
+
   // Duplicate POs
   const poMap = new Map();
   appState.orders.forEach(o => {
@@ -799,7 +889,7 @@ function detectDiscrepancies() {
       poMap.set(o.PO, o);
     }
   });
-  
+
   // Orders in trucks but not in orders
   appState.truckloads.forEach(truck => {
     (truck.orders || []).forEach(po => {
@@ -815,7 +905,7 @@ function detectDiscrepancies() {
       }
     });
   });
-  
+
   return discrepancies;
 }
 
@@ -823,26 +913,26 @@ function detectDiscrepancies() {
 function renderDock() {
   const tb = $("dock-body");
   if (!tb) return;
-  
+
   const q = ($("dock-search")?.value || "").toLowerCase();
   tb.innerHTML = "";
-  
+
   const loads = appState.truckloads
     .filter(t => !t.departed)
     .filter(t => {
       if (!q) return true;
-      return [t.loadId, t.customer, t.carrier, t.status].some(v => 
+      return [t.loadId, t.customer, t.carrier, t.status].some(v =>
         String(v || "").toLowerCase().includes(q)
       );
     })
     .sort((a, b) => (a.pickupDate || "").localeCompare(b.pickupDate || ""));
-  
+
   loads.forEach(t => {
     const tr = document.createElement("tr");
-    
+
     const statusClass = t.status === "Fully Staged" ? "status-staged" :
-                        t.status === "In Progress" ? "status-progress" : "";
-    
+      t.status === "In Progress" ? "status-progress" : "";
+
     tr.innerHTML = `
       <td>${t.loadId}</td>
       <td>${t.customer || ""}</td>
@@ -872,7 +962,7 @@ function renderDock() {
     `;
     tb.appendChild(tr);
   });
-  
+
   // Attach change handlers
   document.querySelectorAll(".dock-sl").forEach(sel => {
     sel.onchange = () => updateDockLocation(sel.dataset.id, "stagedLocationSL", sel.value);
@@ -884,24 +974,61 @@ function renderDock() {
 
 function updateDockLocation(loadId, field, value) {
   const truck = appState.truckloads.find(t => t.loadId === loadId);
-  if (truck) {
-    truck[field] = value;
-    truck.stagingLog.push({
-      ts: new Date().toISOString(),
-      action: `${field} updated`,
-      user: appState.session.email,
-      note: value
-    });
-    saveState();
-    checkAlerts();
+  if (!truck) return;
+  const old = truck[field] || "";
+  if (old === value) return;
+
+  // Door conflict prevention for Truckload + Floorload
+  if (field === "stagedLocationDD" && value) {
+    if (truck.loadType === "Truckload" || truck.loadType === "Floorload") {
+      const conflict = appState.truckloads.find(t =>
+        t.loadId !== truck.loadId &&
+        !t.departed &&
+        (t.loadType === "Truckload" || t.loadType === "Floorload") &&
+        t.pickupDate === truck.pickupDate &&
+        t.stagedLocationDD === value
+      );
+      if (conflict) {
+        alert(`Door conflict: ${value} is already assigned to ${conflict.loadId} on ${truck.pickupDate}. Assignment not changed.`);
+        const sel = document.querySelector(`.dock-dd[data-id="${loadId}"]`);
+        if (sel) sel.value = old;
+        return;
+      }
+    }
   }
+
+  // Staging lane conflict pop-up (all load types)
+  if (field === "stagedLocationSL" && value) {
+    const conflictLane = appState.truckloads.find(t =>
+      t.loadId !== truck.loadId &&
+      !t.departed &&
+      t.pickupDate === truck.pickupDate &&
+      t.stagedLocationSL === value
+    );
+    if (conflictLane) {
+      alert(`Staging lane conflict: ${value} is already assigned to ${conflictLane.loadId} on ${truck.pickupDate}. Assignment not changed.`);
+      const sel = document.querySelector(`.dock-sl[data-id="${loadId}"]`);
+      if (sel) sel.value = old;
+      return;
+    }
+  }
+
+  truck[field] = value;
+  appendStagingLog(truck, {
+    ts: new Date().toISOString(),
+    action: `${field} updated`,
+    user: appState.session.email,
+    note: value
+  });
+  saveState();
+  checkAlerts();
 }
 
 function setDockStatus(loadId, status) {
   const truck = appState.truckloads.find(t => t.loadId === loadId);
   if (truck) {
     truck.status = status;
-    truck.stagingLog.push({
+    appendStagingLog(truck, {
       ts: new Date().toISOString(),
       action: `Status: ${status}`,
       user: appState.session.email,
@@ -916,7 +1043,7 @@ function setDockStatus(loadId, status) {
 function showDockHistory(loadId) {
   const truck = appState.truckloads.find(t => t.loadId === loadId);
   if (!truck) return;
-  
+
   $("dock-history-title").textContent = `History: ${loadId}`;
   $("dock-history-info").innerHTML = `
     <div><strong>Customer:</strong> ${truck.customer}</div>
@@ -924,10 +1051,10 @@ function showDockHistory(loadId) {
     <div><strong>Pickup:</strong> ${truck.pickupDate}</div>
     <div><strong>Status:</strong> ${truck.status}</div>
   `;
-  
+
   const tb = $("dock-history-body");
   tb.innerHTML = "";
-  
+
   (truck.stagingLog || []).forEach(log => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
@@ -938,7 +1065,7 @@ function showDockHistory(loadId) {
     `;
     tb.appendChild(tr);
   });
-  
+
   $("dock-history-overlay").classList.remove("hidden");
 }
 
@@ -946,7 +1073,7 @@ function showDockHistory(loadId) {
 function renderTodays() {
   const tb = $("today-body");
   if (!tb) return;
-  
+
   const today = todayYMD();
   const loads = appState.truckloads
     .filter(t => sameDate(t.pickupDate, today))
@@ -954,21 +1081,21 @@ function renderTodays() {
       const order = { 'At Door': 1, 'Fully Staged': 2, 'In Progress': 3, 'Not Started': 4, 'Departed': 5 };
       return (order[a.status] || 99) - (order[b.status] || 99);
     });
-  
+
   tb.innerHTML = "";
-  
+
   if (loads.length === 0) {
     tb.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:40px;">No pickups scheduled for today</td></tr>`;
     return;
   }
-  
+
   loads.forEach(t => {
     const tr = document.createElement("tr");
-    
+
     const statusClass = t.status === "Departed" ? "status-departed" :
-                        t.status === "At Door" ? "status-door" :
-                        t.status === "Fully Staged" ? "status-staged" : "";
-    
+      t.status === "At Door" ? "status-door" :
+        t.status === "Fully Staged" ? "status-staged" : "";
+
     tr.innerHTML = `
       <td>${t.loadId}</td>
       <td>${t.customer || ""}</td>
@@ -993,7 +1120,7 @@ function markArrived(loadId) {
   if (truck) {
     truck.status = "At Door";
     truck.arrivedAt = new Date().toISOString();
-    truck.stagingLog.push({
+    appendStagingLog(truck, {
       ts: new Date().toISOString(),
       action: "Arrived at door",
       user: appState.session.email,
@@ -1011,13 +1138,13 @@ function markDeparted(loadId) {
     truck.status = "Departed";
     truck.departed = true;
     truck.departedAt = new Date().toISOString();
-    truck.stagingLog.push({
+    appendStagingLog(truck, {
       ts: new Date().toISOString(),
       action: "Departed",
       user: appState.session.email,
       note: ""
     });
-    
+
     // Add to history
     if (!appState.history.find(h => h.loadId === loadId)) {
       appState.history.push({
@@ -1031,7 +1158,7 @@ function markDeparted(loadId) {
         departedAt: truck.departedAt
       });
     }
-    
+
     saveState();
     renderTodays();
     renderHistory();
@@ -1043,25 +1170,25 @@ function markDeparted(loadId) {
 function renderTruckloads() {
   const tb = $("truckloads-body");
   if (!tb) return;
-  
+
   const q = ($("truckloads-search")?.value || "").toLowerCase();
-  
+
   const loads = appState.truckloads.filter(t => {
     if (!q) return true;
-    return [t.loadId, t.customer, t.carrier, t.status].some(v => 
+    return [t.loadId, t.customer, t.carrier, t.status].some(v =>
       String(v || "").toLowerCase().includes(q)
     );
   });
-  
+
   tb.innerHTML = "";
-  
+
   loads.forEach(t => {
     const tr = document.createElement("tr");
     tr.onclick = () => showTruckDetail(t.loadId);
-    
+
     const statusClass = t.status === "Departed" ? "status-departed" :
-                        t.status === "Fully Staged" ? "status-staged" : "";
-    
+      t.status === "Fully Staged" ? "status-staged" : "";
+
     tr.innerHTML = `
       <td onclick="event.stopPropagation()">
         <input type="checkbox" class="truck-check" data-id="${t.loadId}" ${selectedTrucks.has(t.loadId) ? "checked" : ""}>
@@ -1077,7 +1204,7 @@ function renderTruckloads() {
     `;
     tb.appendChild(tr);
   });
-  
+
   document.querySelectorAll(".truck-check").forEach(chk => {
     chk.onchange = (e) => {
       const id = e.target.dataset.id;
@@ -1090,10 +1217,9 @@ function renderTruckloads() {
 function showTruckDetail(loadId) {
   const truck = appState.truckloads.find(t => t.loadId === loadId);
   if (!truck) return;
-  
+
   $("tl-detail-title").textContent = `${truck.loadId} — ${truck.customer || ""}`;
-  
-  // Show orders in truck
+
   const truckOrders = appState.orders.filter(o => (truck.orders || []).includes(o.PO));
   $("tl-detail-body").innerHTML = `
     <strong>Orders (${truckOrders.length}):</strong>
@@ -1110,31 +1236,73 @@ function showTruckDetail(loadId) {
       `).join("")}
     </table>
   `;
-  
-  // Fill edit fields
-  $("ed-load-id").value = truck.loadId;
+
+  const role = appState.session.role;
+  const canEditId = role === "admin" || role === "router";
+
+  const idInput = $("ed-load-id");
+  idInput.value = truck.loadId;
+  idInput.disabled = !canEditId;
+
   $("ed-pickup-date").value = truck.pickupDate || "";
   $("ed-pickup-window").value = truck.pickupWindow || "";
   $("ed-carrier").value = truck.carrier || "";
   $("ed-customer").value = truck.customer || "";
-  
+
   $("tl-detail-overlay").classList.remove("hidden");
-  
-  // Save handler
+
   $("tl-detail-save").onclick = () => {
-    truck.loadId = $("ed-load-id").value.trim();
-    truck.pickupDate = $("ed-pickup-date").value;
-    truck.pickupWindow = $("ed-pickup-window").value;
+    const oldId = truck.loadId;
+    const newIdRaw = $("ed-load-id").value.trim();
+    const newId = newIdRaw || oldId;
+
+    const newDate = $("ed-pickup-date").value || truck.pickupDate;
+    const newWindow = $("ed-pickup-window").value || truck.pickupWindow;
+
+    // Capacity validation if pickup date/window change
+    if ((newDate !== truck.pickupDate || newWindow !== truck.pickupWindow) && truck.loadType) {
+      const cap = canScheduleLoad(newDate, newWindow, truck.loadType, oldId);
+      if (!cap.ok) {
+        alert(`Cannot move ${truck.loadType} ${oldId} to ${newDate} ${newWindow} — capacity reached (${cap.used}/${cap.max}).`);
+        return;
+      }
+    }
+
+    if (!canEditId && newId !== oldId) {
+      alert("You do not have permission to change Load ID.");
+      return;
+    }
+
+    // Update orders "Load ID" references if ID changed
+    if (canEditId && newId !== oldId) {
+      appState.orders = appState.orders.map(o => {
+        if (!o["Load ID"]) return o;
+        const parts = o["Load ID"].split(",").map(x => x.trim()).filter(Boolean);
+        const newParts = parts.map(id => id === oldId ? newId : id);
+        return { ...o, "Load ID": Array.from(new Set(newParts)).join(", ") };
+      });
+
+      if (selectedTrucks.has(oldId)) {
+        selectedTrucks.delete(oldId);
+        selectedTrucks.add(newId);
+      }
+
+      // Also change truck.loadId
+      truck.loadId = newId;
+    }
+
+    truck.pickupDate = newDate;
+    truck.pickupWindow = newWindow;
     truck.carrier = $("ed-carrier").value.trim();
     truck.customer = $("ed-customer").value.trim();
-    
-    truck.stagingLog.push({
+
+    appendStagingLog(truck, {
       ts: new Date().toISOString(),
       action: "Edited",
       user: appState.session.email,
       note: "Manual edit"
     });
-    
+
     saveState();
     renderAll();
     $("tl-detail-overlay").classList.add("hidden");
@@ -1146,13 +1314,13 @@ function showTruckDetail(loadId) {
 function renderCalendar() {
   const grid = $("calendar-grid");
   if (!grid) return;
-  
+
   const view = $("cal-view")?.value || "month";
   const filter = ($("cal-filter")?.value || "").toLowerCase();
-  
+
   let start, days;
   const dow = (calAnchor.getDay() + 6) % 7;
-  
+
   if (view === "wk") {
     start = addDays(calAnchor, -dow);
     days = 7;
@@ -1165,34 +1333,32 @@ function renderCalendar() {
     start = addDays(mStart, -lead);
     days = 42;
   }
-  
+
   $("cal-title").textContent = calAnchor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  
+
   grid.innerHTML = "";
-  
-  // Headers
+
   ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].forEach(d => {
     const div = document.createElement("div");
     div.className = "cal-header";
     div.textContent = d;
     grid.appendChild(div);
   });
-  
-  // Days
+
   for (let i = 0; i < days; i++) {
     const day = addDays(start, i);
     const dateStr = ymd(day);
     const isToday = sameDate(day, todayYMD());
-    
+
     const cell = document.createElement("div");
     cell.className = `cal-cell ${isToday ? "today" : ""}`;
     cell.dataset.date = dateStr;
-    
-    const trucks = appState.truckloads.filter(t => 
+
+    const trucks = appState.truckloads.filter(t =>
       sameDate(t.pickupDate, day) &&
       (!filter || (t.customer || "").toLowerCase().includes(filter) || (t.carrier || "").toLowerCase().includes(filter))
     );
-    
+
     cell.innerHTML = `
       <div class="cal-cell-head">
         ${day.getDate()}
@@ -1210,16 +1376,20 @@ function renderCalendar() {
         ${trucks.length > 4 ? `<div style="font-size:10px;color:#6b7280;">+${trucks.length - 4} more</div>` : ""}
       </div>
     `;
-    
-    // Drop handlers
+
     cell.ondragover = (e) => e.preventDefault();
     cell.ondrop = (e) => {
       e.preventDefault();
       const loadId = e.dataTransfer.getData("text/plain");
       const truck = appState.truckloads.find(t => t.loadId === loadId);
       if (truck) {
+        const capacity = canScheduleLoad(dateStr, truck.pickupWindow, truck.loadType, truck.loadId);
+        if (!capacity.ok) {
+          alert(`Move not completed: time block is full for ${truck.loadType} at ${dateStr} ${truck.pickupWindow} (${capacity.used}/${capacity.max}).`);
+          return;
+        }
         truck.pickupDate = dateStr;
-        truck.stagingLog.push({
+        appendStagingLog(truck, {
           ts: new Date().toISOString(),
           action: "Date moved via calendar",
           user: appState.session.email,
@@ -1230,11 +1400,10 @@ function renderCalendar() {
         logChange("Calendar: Truck Moved", { loadId, newDate: dateStr });
       }
     };
-    
+
     grid.appendChild(cell);
   }
-  
-  // Drag handlers
+
   document.querySelectorAll(".cal-chip[draggable]").forEach(chip => {
     chip.ondragstart = (e) => {
       e.dataTransfer.setData("text/plain", chip.dataset.id);
@@ -1247,40 +1416,37 @@ function renderMetrics() {
   const today = todayYMD();
   const weekStart = ymd(addDays(new Date(today), -7));
   const monthStart = today.slice(0, 7) + "-01";
-  
+
   const todayTrucks = appState.truckloads.filter(t => sameDate(t.pickupDate, today));
   const weekTrucks = appState.truckloads.filter(t => t.pickupDate >= weekStart && t.pickupDate <= today);
   const monthTrucks = appState.truckloads.filter(t => t.pickupDate >= monthStart);
-  
+
   $("m-units-today").textContent = todayTrucks.reduce((s, t) => s + (t.units || 0), 0).toLocaleString();
   $("m-units-week").textContent = weekTrucks.reduce((s, t) => s + (t.units || 0), 0).toLocaleString();
   $("m-cartons").textContent = appState.truckloads.reduce((s, t) => s + (t.cartons || 0), 0).toLocaleString();
   $("m-total-loads").textContent = monthTrucks.length;
-  
-  // Status breakdown
+
   const staged = appState.truckloads.filter(t => t.status === "Fully Staged").length;
   const progress = appState.truckloads.filter(t => t.status === "In Progress").length;
-  
+
   $("status-breakdown").innerHTML = `
     <div class="metric-row"><span>Fully Staged</span><strong style="color:#059669;">${staged}</strong></div>
     <div class="metric-row"><span>In Progress</span><strong style="color:#2563eb;">${progress}</strong></div>
     <div class="metric-row"><span>Departed</span><strong>${appState.history.length}</strong></div>
   `;
-  
-  // Carrier breakdown
+
   const carriers = {};
   appState.truckloads.forEach(t => {
     const c = t.carrier || "Unknown";
     carriers[c] = (carriers[c] || 0) + 1;
   });
-  
+
   $("carrier-breakdown").innerHTML = Object.entries(carriers)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 6)
     .map(([c, n]) => `<div class="metric-row"><span>${c}</span><strong>${n}</strong></div>`)
     .join("");
-  
-  // Data quality
+
   const discrepancies = detectDiscrepancies();
   $("data-quality").innerHTML = `
     <div class="metric-row"><span>Total Orders</span><strong>${appState.orders.length}</strong></div>
@@ -1293,23 +1459,23 @@ function renderMetrics() {
 function renderHistory() {
   const tb = $("history-body");
   if (!tb) return;
-  
+
   const q = ($("history-search")?.value || "").toLowerCase();
-  
+
   const filtered = appState.history.filter(h => {
     if (!q) return true;
-    return [h.loadId, h.customer, h.carrier].some(v => 
+    return [h.loadId, h.customer, h.carrier].some(v =>
       String(v || "").toLowerCase().includes(q)
     );
   });
-  
+
   tb.innerHTML = "";
-  
+
   if (filtered.length === 0) {
     tb.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:40px;">No departed loads yet</td></tr>`;
     return;
   }
-  
+
   filtered.forEach(h => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
@@ -1326,12 +1492,11 @@ function renderHistory() {
   });
 }
 
-/* ========= MODALS ========= */
+/* ========= MODALS, ALERTS, EXPORT ========= */
 function showDockMapModal() {
   const today = todayYMD();
   const todayTrucks = appState.truckloads.filter(t => sameDate(t.pickupDate, today));
-  
-  // Dock doors
+
   $("dock-doors-map").innerHTML = DD_DOORS.slice(0, 20).map(door => {
     const assigned = todayTrucks.find(t => t.stagedLocationDD === door);
     return `
@@ -1341,8 +1506,7 @@ function showDockMapModal() {
       </div>
     `;
   }).join("");
-  
-  // Staging lanes
+
   $("staging-lanes-map").innerHTML = SL_LANES.slice(0, 20).map(lane => {
     const assigned = todayTrucks.find(t => t.stagedLocationSL === lane);
     return `
@@ -1352,7 +1516,7 @@ function showDockMapModal() {
       </div>
     `;
   }).join("");
-  
+
   $("dock-map-overlay").classList.remove("hidden");
 }
 
@@ -1367,14 +1531,31 @@ function applyBulkEdit() {
   const date = $("bulk-pickup-date").value;
   const window = $("bulk-pickup-window").value;
   const carrier = $("bulk-carrier").value.trim();
-  
+
   let updated = 0;
+  const skipped = [];
+
   appState.truckloads.forEach(t => {
     if (selectedTrucks.has(t.loadId)) {
-      if (date) t.pickupDate = date;
-      if (window) t.pickupWindow = window;
+      let newDate = t.pickupDate;
+      let newWindow = t.pickupWindow;
+
+      if (date) newDate = date;
+      if (window) newWindow = window;
+
+      if ((date || window) && t.loadType) {
+        const cap = canScheduleLoad(newDate, newWindow, t.loadType, t.loadId);
+        if (!cap.ok) {
+          skipped.push({ id: t.loadId, date: newDate, window: newWindow, type: t.loadType, cap });
+          return;
+        }
+      }
+
+      if (date) t.pickupDate = newDate;
+      if (window) t.pickupWindow = newWindow;
       if (carrier) t.carrier = carrier;
-      t.stagingLog.push({
+
+      appendStagingLog(t, {
         ts: new Date().toISOString(),
         action: "Bulk edit",
         user: appState.session.email,
@@ -1383,18 +1564,25 @@ function applyBulkEdit() {
       updated++;
     }
   });
-  
+
   selectedTrucks.clear();
   $("bulk-edit-overlay").classList.add("hidden");
   saveState();
   renderAll();
   logChange("Bulk Edit Applied", { count: updated });
+
+  if (skipped.length > 0) {
+    const msg = skipped.map(s =>
+      `${s.id} (${s.type}) at ${s.date} ${s.window} skipped — capacity ${s.cap.used}/${s.cap.max}`
+    ).join("\n");
+    alert("Some truckloads were not updated due to capacity limits:\n\n" + msg);
+  }
 }
 
 function showAlertsModal() {
   const list = $("alerts-list");
   list.innerHTML = "";
-  
+
   if (appState.alerts.length === 0) {
     list.innerHTML = `<div style="text-align:center;padding:40px;color:#6b7280;">No alerts at this time</div>`;
   } else {
@@ -1411,7 +1599,7 @@ function showAlertsModal() {
       list.appendChild(div);
     });
   }
-  
+
   $("alerts-overlay").classList.remove("hidden");
 }
 
@@ -1424,7 +1612,7 @@ function dismissAlert(id) {
 function showChangelogModal() {
   const list = $("changelog-list");
   list.innerHTML = "";
-  
+
   appState.changeLog.slice(0, 30).forEach(log => {
     const div = document.createElement("div");
     div.className = "changelog-item";
@@ -1434,7 +1622,7 @@ function showChangelogModal() {
     `;
     list.appendChild(div);
   });
-  
+
   $("changelog-overlay").classList.remove("hidden");
 }
 
@@ -1445,7 +1633,7 @@ function exportData() {
     history: appState.history,
     exportedAt: new Date().toISOString()
   };
-  
+
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -1453,7 +1641,7 @@ function exportData() {
   a.download = `ncdc-backup-${todayYMD()}.json`;
   a.click();
   URL.revokeObjectURL(url);
-  
+
   logChange("Data Exported", {});
 }
 
@@ -1471,8 +1659,7 @@ function renderAll() {
 /* ========= INITIALIZATION ========= */
 function init() {
   loadState();
-  
-  // Auto-login if session exists
+
   if (appState.session?.authed) {
     $("login-screen").classList.add("hidden");
     $("app-shell").classList.remove("hidden");
@@ -1481,10 +1668,9 @@ function init() {
     renderAll();
     checkAlerts();
   }
-  
+
   setupNavigation();
-  
-  // Event listeners
+
   $("login-btn").onclick = handleLogin;
   $("logout-btn").onclick = handleLogout;
   $("orders-csv").onchange = handleCSVUpload;
@@ -1492,37 +1678,36 @@ function init() {
   $("dock-search").oninput = renderDock;
   $("truckloads-search").oninput = renderTruckloads;
   $("history-search").oninput = renderHistory;
-  
+
   $("create-truckload-btn").onclick = showCreateTruckModal;
   $("auto-route-btn").onclick = runAutoRouter;
   $("tl-save").onclick = saveTruckload;
   $("tl-cancel").onclick = () => $("modal-overlay").classList.add("hidden");
   $("tl-detail-close").onclick = () => $("tl-detail-overlay").classList.add("hidden");
-  
+
   $("auto-confirm").onclick = confirmAutoRoute;
   $("auto-cancel").onclick = () => $("auto-overlay").classList.add("hidden");
-  
+
   $("dock-history-close").onclick = () => $("dock-history-overlay").classList.add("hidden");
   $("dock-map-close").onclick = () => $("dock-map-overlay").classList.add("hidden");
-  
+
   $("bulk-apply").onclick = applyBulkEdit;
   $("bulk-cancel").onclick = () => $("bulk-edit-overlay").classList.add("hidden");
-  
+
   $("alerts-close").onclick = () => $("alerts-overlay").classList.add("hidden");
   $("changelog-close").onclick = () => $("changelog-overlay").classList.add("hidden");
-  
+
   $("undo-btn").onclick = () => alert("Undo feature coming soon!");
   $("changelog-btn").onclick = showChangelogModal;
   $("export-btn").onclick = exportData;
-  
+
   $("clear-all-data").onclick = () => {
     if (confirm("Clear ALL data? This cannot be undone.")) {
       localStorage.removeItem(STORAGE_KEY);
       location.reload();
     }
   };
-  
-  // Calendar
+
   $("cal-prev").onclick = () => {
     const v = $("cal-view").value;
     calAnchor = v === "wk" ? addDays(calAnchor, -7) : v === "2w" ? addDays(calAnchor, -14) : new Date(calAnchor.getFullYear(), calAnchor.getMonth() - 1, 1);
@@ -1536,7 +1721,7 @@ function init() {
   $("cal-today").onclick = () => { calAnchor = new Date(); renderCalendar(); };
   $("cal-view").onchange = renderCalendar;
   $("cal-filter").oninput = renderCalendar;
-  
+
   $("select-all-orders").onchange = (e) => {
     document.querySelectorAll("#orders-body .po-check").forEach(chk => {
       chk.checked = e.target.checked;
@@ -1545,12 +1730,10 @@ function init() {
     });
     $("selected-count").textContent = selectedPOs.size;
   };
-  
-  // Auto-save every 30 seconds
+
   setInterval(() => {
     if (appState.session.authed) saveState();
   }, 30000);
 }
 
-// Start the app
 document.addEventListener("DOMContentLoaded", init);
