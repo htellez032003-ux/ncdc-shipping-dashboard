@@ -7,19 +7,15 @@
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
-
   <!-- LOGIN -->
   <div id="login-screen" class="login-screen">
     <div class="login-card">
       <h1 class="app-title">NCDC Shipping Dashboard</h1>
       <p class="app-subtitle">Internal Scheduling &amp; Dock Control</p>
-
       <label>Email</label>
       <input id="login-email" type="email" value="htellez032003@gmail.com" />
-
       <label>Password</label>
       <input id="login-password" type="password" value="Ltapaprel040523" />
-
       <button id="login-btn" class="btn primary">Sign In</button>
       <p id="login-error" class="error hidden">Invalid credentials.</p>
     </div>
@@ -27,8 +23,6 @@
 
   <!-- APP SHELL -->
   <div id="app-shell" class="app-shell hidden">
-
-    <!-- SIDEBAR -->
     <aside class="sidebar">
       <div class="sidebar-header">
         <img class="logo-img" src="./assets/lt_apparel_group_logo.png" alt="LT Apparel Group" />
@@ -37,9 +31,9 @@
           <div class="sidebar-sub">Shipping</div>
         </div>
       </div>
-
       <nav>
         <button data-tab="orders" class="nav-link active">Orders</button>
+        <button data-tab="discrepancies" class="nav-link">BC &amp; Dashboard Discrepancies</button>
         <button data-tab="dock" class="nav-link">Dock</button>
         <button data-tab="todays" class="nav-link">Today's Pickups</button>
         <button data-tab="truckloads" class="nav-link">Truckloads</button>
@@ -49,13 +43,10 @@
         <button data-tab="team" class="nav-link">Team</button>
         <button data-tab="settings" class="nav-link">Settings</button>
       </nav>
-
       <button id="logout-btn" class="btn secondary small">Logout</button>
     </aside>
 
-    <!-- MAIN CONTENT -->
     <main class="main">
-
       <!-- ORDERS TAB -->
       <section id="tab-orders" class="tab-panel">
         <header class="pane-header">
@@ -83,12 +74,12 @@
             <button id="create-truckload-btn" class="btn tiny primary">Create Truckload</button>
             <select id="assign-existing-load" class="input-slim"></select>
             <button id="assign-pos-to-load" class="btn tiny">Assign to Load</button>
-            <button id="auto-route-btn" class="btn tiny">Auto-Route Orders</button>
           </div>
         </div>
 
         <div id="active-filters" class="chips"></div>
 
+        <!-- ORDERS LIST -->
         <div class="orders-grid">
           <table>
             <thead>
@@ -109,15 +100,44 @@
         </div>
       </section>
 
+      <!-- BC & DASHBOARD DISCREPANCIES TAB -->
+      <section id="tab-discrepancies" class="tab-panel hidden">
+        <header class="pane-header">
+          <h2>BC &amp; Dashboard Discrepancies</h2>
+          <p>Differences between latest BC CSV and current dashboard / truckloads.</p>
+        </header>
+
+        <div class="filters-row">
+          <input id="disc-search" type="text" placeholder="Filter by PO, field, type, load..." />
+          <button id="disc-clear" class="btn tiny secondary">Clear</button>
+        </div>
+
+        <div class="dock-list">
+          <table>
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>PO Num</th>
+                <th>Field</th>
+                <th>BC Value</th>
+                <th>Dashboard Value</th>
+                <th>Load IDs</th>
+              </tr>
+            </thead>
+            <tbody id="disc-body"></tbody>
+          </table>
+        </div>
+      </section>
+
       <!-- DOCK TAB -->
       <section id="tab-dock" class="tab-panel hidden">
         <header class="pane-header">
           <h2>Dock</h2>
-          <p>Assign staging, manage dock flow, track pallets and loaders.</p>
+          <p>Assign staging by truckload. One line per truck.</p>
         </header>
 
         <div class="filters-row">
-          <input id="dock-search" type="text" placeholder="Filter…" />
+          <input id="dock-search" type="text" placeholder="Filter by any column..." />
           <button id="dock-clear" class="btn tiny secondary">Clear</button>
         </div>
 
@@ -125,11 +145,10 @@
           <table>
             <thead>
               <tr>
-                <th>Load ID</th><th>Customer</th><th>Carrier</th><th>Load Type</th>
-                <th>Pick Up Date</th><th>Pickup Window</th>
-                <th>Total Cartons</th><th>Routed Pallets</th><th>Actual Pallets</th>
-                <th>Staged Location</th><th>Assigned To</th>
-                <th>Status</th><th>Actions</th>
+                <th>Load ID</th><th>Customer</th><th>Carrier/Shipper</th><th>Load Type</th>
+                <th>Pick Up Date</th><th>Pickup Window</th><th>Total Cartons</th>
+                <th>Routed Pallets</th><th>Actual Pallets</th>
+                <th>Staged Location</th><th>Assigned To</th><th>Status</th><th>Actions</th>
               </tr>
             </thead>
             <tbody id="dock-body"></tbody>
@@ -141,16 +160,32 @@
       <section id="tab-todays" class="tab-panel hidden">
         <header class="pane-header">
           <h2>Today's Pickups</h2>
-          <p>Live dock board.</p>
+          <p>Live board for the dock to update arrival/departure.</p>
         </header>
+
+        <div class="filters-row">
+          <input id="todays-search" type="text" placeholder="Filter by any column..." />
+          <button id="todays-clear" class="btn tiny secondary">Clear</button>
+        </div>
 
         <div class="today-table">
           <table>
             <thead>
               <tr>
-                <th>Load ID</th><th>Customer</th><th>Carrier</th><th>Load Type</th>
-                <th>Pick Up Time</th><th>Total Cartons</th><th>Loaded By</th>
-                <th>Status</th><th>Arrived</th><th>Departed</th>
+                <th>Load ID</th>
+                <th>Customer</th>
+                <th>Carrier</th>
+                <th>Load Type</th>
+                <th>BOL#</th>
+                <th>Master BOL#</th>
+                <th>Pick Up Time</th>
+                <th>Total Cartons</th>
+                <th>Loaded By</th>
+                <th>Status</th>
+                <th>Arrived</th>
+                <th>Departed</th>
+                <th>Arrived At</th>
+                <th>Departed At</th>
               </tr>
             </thead>
             <tbody id="today-body"></tbody>
@@ -162,8 +197,13 @@
       <section id="tab-truckloads" class="tab-panel hidden">
         <header class="pane-header">
           <h2>Truckloads</h2>
-          <p>Click a load to edit and view PO/Master breakdown.</p>
+          <p>Click a load to edit and view Master/BOL/PO breakdown.</p>
         </header>
+
+        <div class="filters-row">
+          <input id="truckloads-search" type="text" placeholder="Filter by any column..." />
+          <button id="truckloads-clear" class="btn tiny secondary">Clear</button>
+        </div>
 
         <div class="truckloads-list">
           <table>
@@ -186,77 +226,121 @@
             <button id="cal-prev" class="btn tiny secondary">◀</button>
             <div id="cal-title" class="cal-title"></div>
             <button id="cal-next" class="btn tiny secondary">▶</button>
-
             <select id="cal-view" class="input-slim">
               <option value="month">Month</option>
               <option value="2w">2 Weeks</option>
               <option value="wk">Week</option>
             </select>
-
             <input id="cal-filter" class="input-slim" placeholder="Filter customer/carrier…" />
           </div>
         </header>
-
         <div id="calendar-grid" class="calendar-grid"></div>
-        <p class="muted">Drag a load chip to move it to another pickup date.</p>
+        <p class="muted">Drag a load chip to another day to change its pickup date.</p>
       </section>
+
       <!-- METRICS TAB -->
       <section id="tab-metrics" class="tab-panel hidden">
         <header class="pane-header">
           <h2>Metrics</h2>
-          <p>Live operational totals.</p>
+          <p>Rolling summary for staging and pickups.</p>
         </header>
-
         <div class="metrics-row">
-          <div class="metric-card">
-            <div class="metric-label">Loads This Month</div>
-            <div id="m-total-loads" class="metric-value">0</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-label">Total Cartons Routed</div>
-            <div id="m-cartons" class="metric-value">0</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-label">Fully Staged</div>
-            <div id="m-staged" class="metric-value">0</div>
-          </div>
+          <div class="metric-card"><div class="metric-label">Total Loads (month)</div><div class="metric-value" id="m-total-loads">0</div></div>
+          <div class="metric-card"><div class="metric-label">Total Cartons</div><div class="metric-value" id="m-cartons">0</div></div>
+          <div class="metric-card"><div class="metric-label">Fully Staged</div><div class="metric-value" id="m-staged">0</div></div>
         </div>
+        <div id="metrics-chart" class="chart-placeholder"></div>
       </section>
-
       <!-- HISTORY TAB -->
       <section id="tab-history" class="tab-panel hidden">
         <header class="pane-header">
           <h2>History</h2>
-          <p>All departed loads are archived here.</p>
+          <p>Departed truckloads archive.</p>
         </header>
-
         <div class="filters-row">
-          <input id="history-search" type="text" placeholder="Filter…" />
+          <input id="history-search" type="text" placeholder="Filter by any value..." />
           <button id="history-clear" class="btn tiny secondary">Clear</button>
         </div>
-
-        <div class="dock-list">
-          <table>
-            <thead>
-              <tr>
-                <th>Load ID</th><th>Customer</th><th>Carrier</th>
-                <th>Pick Up Date</th><th>Pickup Window</th><th>Status</th>
-              </tr>
-            </thead>
-            <tbody id="history-body"></tbody>
-          </table>
-        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Load ID</th><th>Customer</th><th>Carrier</th>
+              <th>Pick Up Date</th><th>Pickup Window</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="history-body"></tbody>
+        </table>
       </section>
 
       <!-- TEAM TAB -->
       <section id="tab-team" class="tab-panel hidden">
         <header class="pane-header">
           <h2>Team</h2>
-          <p>Manage routing and dock team members.</p>
+          <p>Manage users, permissions, and preferences.</p>
         </header>
 
+        <div class="filters-row">
+          <input id="team-search" type="text" placeholder="Filter by name, email, role..." />
+          <button id="team-clear" class="btn tiny secondary">Clear</button>
+        </div>
+
         <div class="team-flex">
-          <ul class="team-list" id="team-list"></ul>
+          <div class="team-col">
+            <h3>Users</h3>
+            <ul id="team-list" class="team-list"></ul>
+          </div>
+          <div class="team-col">
+            <div class="row gap" style="justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <h3 style="margin:0;">Add / Edit</h3>
+              <button id="team-new" class="btn small">New Account</button>
+            </div>
+            <form id="team-form">
+              <input type="hidden" id="team-id" />
+              <input type="text" id="team-name" class="input" placeholder="Name" required />
+              <input type="email" id="team-email" class="input" placeholder="Email" required />
+              <select id="team-role" class="input">
+                <option value="dock">dock</option>
+                <option value="router">router</option>
+                <option value="admin">admin</option>
+              </select>
+              <select id="team-shift" class="input">
+                <option value="1st">1st</option>
+                <option value="2nd">2nd</option>
+                <option value="3rd">3rd</option>
+              </select>
+              <label class="inline"><input type="checkbox" id="team-active" checked /> Active</label>
+              <select id="team-theme" class="input">
+                <option value="light">light</option>
+                <option value="dark">dark</option>
+              </select>
+              <select id="team-lang" class="input">
+                <option value="en">English</option>
+                <option value="es-mx">Español LATAM</option>
+              </select>
+
+              <fieldset class="setting-block" style="margin-top:10px;">
+                <legend style="font-size:13px;font-weight:600;margin-bottom:4px;">Permissions</legend>
+                <div class="row" style="flex-wrap:wrap;gap:6px;">
+                  <label class="inline"><input type="checkbox" id="perm-orders" /> Orders</label>
+                  <label class="inline"><input type="checkbox" id="perm-discrepancies" /> Discrepancies</label>
+                  <label class="inline"><input type="checkbox" id="perm-dock" /> Dock</label>
+                  <label class="inline"><input type="checkbox" id="perm-todays" /> Today's Pickups</label>
+                  <label class="inline"><input type="checkbox" id="perm-truckloads" /> Truckloads</label>
+                  <label class="inline"><input type="checkbox" id="perm-calendar" /> Calendar</label>
+                  <label class="inline"><input type="checkbox" id="perm-metrics" /> Metrics</label>
+                  <label class="inline"><input type="checkbox" id="perm-history" /> History</label>
+                  <label class="inline"><input type="checkbox" id="perm-team" /> Team</label>
+                  <label class="inline"><input type="checkbox" id="perm-settings" /> Settings</label>
+                </div>
+              </fieldset>
+
+              <div class="row gap" style="margin-top:10px;">
+                <button class="btn small primary" type="submit">Save</button>
+                <button id="team-delete" class="btn small danger" type="button">Delete</button>
+                <button id="team-reset" class="btn small secondary" type="button">Reset</button>
+              </div>
+            </form>
+          </div>
         </div>
       </section>
 
@@ -264,192 +348,98 @@
       <section id="tab-settings" class="tab-panel hidden">
         <header class="pane-header">
           <h2>Settings</h2>
-          <p>System configuration.</p>
+          <p>Capacity per time block, theme, and general options.</p>
         </header>
 
         <div class="settings-grid">
           <div class="setting-block">
-            <h3>Daily Slot Limits</h3>
-            <p>LTL, TL, Floorload capacity per window.</p>
-            <p class="muted">Configured in script.js</p>
+            <h3>Global capacity (fallback)</h3>
+            <label>Max LTL per window</label><input id="max-ltl" type="number" min="0" value="4" />
+            <label>Max Truckload per window</label><input id="max-tl" type="number" min="0" value="3" />
+            <label>Max Floorload per window</label><input id="max-floor" type="number" min="0" value="2" />
           </div>
+
           <div class="setting-block">
-            <h3>Clear Saved Data</h3>
-            <button id="clear-saved-btn" class="btn small danger">Clear Local + IndexedDB</button>
+            <h3>Time blocks</h3>
+            <table class="data-table">
+              <thead>
+                <tr><th>Window</th><th>LTL</th><th>Truckload</th><th>Floorload</th><th></th></tr>
+              </thead>
+              <tbody id="blocks-body"></tbody>
+            </table>
+            <div class="row gap">
+              <input id="block-window" class="input-slim" placeholder="e.g. 01:00pm-03:00pm" />
+              <input id="block-ltl" class="input-slim" type="number" min="0" placeholder="LTL" />
+              <input id="block-tl" class="input-slim" type="number" min="0" placeholder="TL" />
+              <input id="block-floor" class="input-slim" type="number" min="0" placeholder="Floor" />
+              <button id="add-block" class="btn tiny">Add</button>
+            </div>
+          </div>
+
+          <div class="setting-block">
+            <h3>Theme</h3>
+            <label class="inline">
+              <input type="radio" name="app-theme" value="light" checked />
+              Light
+            </label>
+            <label class="inline">
+              <input type="radio" name="app-theme" value="dark" />
+              Dark
+            </label>
           </div>
         </div>
       </section>
-
     </main>
   </div>
 
-
-  <!-- ===== TRUCKLOAD CREATE MODAL ===== -->
+  <!-- CREATE / UPDATE TRUCKLOAD MODAL -->
   <div id="modal-overlay" class="modal-overlay hidden">
     <div class="modal">
       <h3>Create Truckload</h3>
       <p id="modal-selected-pos"></p>
-
-      <label>Load ID</label>
-      <input id="tl-load-id" class="input" />
-
+      <label>Load ID</label><input id="tl-load-id" type="text" />
       <label>Load Type</label>
-      <select id="tl-load-type" class="input">
-        <option>Truckload</option>
-        <option>LTL</option>
-        <option>Floorload</option>
-        <option>Small Parcel</option>
-        <option>SPS</option>
+      <select id="tl-load-type">
+        <option value="LTL">LTL</option>
+        <option value="Truckload">Truckload</option>
+        <option value="Floorload">Floorload</option>
       </select>
-
-      <label>Pickup Date</label>
-      <input id="tl-pickup-date" type="date" class="input" />
-
+      <label>Pick Up Date</label><input id="tl-pickup-date" type="date" />
       <label>Pickup Window</label>
-      <input id="tl-pickup-window" class="input" />
-
-      <label>Carrier</label>
-      <input id="tl-carrier" class="input" />
-
-      <label>Customer</label>
-      <input id="tl-customer" class="input" />
-
-      <label>BOL</label>
-      <input id="tl-bol" class="input" />
-
-      <label>Total Cartons</label>
-      <input id="tl-cartons" class="input" type="number" />
-
-      <label>Total Pallets</label>
-      <input id="tl-pallets" class="input" type="number" />
-
+      <select id="tl-pickup-window" class="input"></select>
+      <label>Carrier/Shipper</label><input id="tl-carrier" type="text" />
+      <label>Customer Name</label><input id="tl-customer" type="text" />
+      <label>BOL / Master BOL</label><input id="tl-bol" type="text" />
+      <label>Total Cartons</label><input id="tl-cartons" type="number" min="0" />
+      <label>Routed Pallet Count</label><input id="tl-pallets" type="number" min="0" />
       <div class="modal-actions">
         <button id="tl-save" class="btn primary tiny">Save</button>
-        <button id="tl-cancel" class="btn tiny secondary">Cancel</button>
+        <button id="tl-cancel" class="btn secondary tiny">Cancel</button>
       </div>
     </div>
   </div>
 
-
-  <!-- ===== TRUCKLOAD DETAIL / EDIT MODAL ===== -->
+  <!-- TRUCKLOAD DETAIL / EDIT MODAL -->
   <div id="tl-detail-overlay" class="modal-overlay hidden">
-    <div class="modal modal-wide">
-      <h3 id="tl-detail-title"></h3>
+    <div class="modal">
+      <h3 id="tl-detail-title">Truckload Detail</h3>
+      <div id="tl-detail-body" class="tl-detail"></div>
 
-      <h4>PO & Master BOL Breakdown</h4>
-      <div id="tl-detail-body"></div>
-
-      <h4>Edit Truckload</h4>
-      <label>Load ID</label>
-      <input id="ed-load-id" class="input" />
-
-      <label>Pickup Date</label>
-      <input id="ed-pickup-date" type="date" class="input" />
-
+      <h4>Edit</h4>
+      <label>Load ID</label><input id="ed-load-id" class="input" />
+      <label>Pickup Date</label><input id="ed-pickup-date" type="date" class="input" />
       <label>Pickup Window</label>
-      <input id="ed-pickup-window" class="input" />
-
-      <label>Carrier</label>
-      <input id="ed-carrier" class="input" />
-
-      <label>Customer</label>
-      <input id="ed-customer" class="input" />
+      <select id="ed-pickup-window" class="input"></select>
+      <label>Carrier</label><input id="ed-carrier" class="input" />
+      <label>Customer</label><input id="ed-customer" class="input" />
 
       <div class="modal-actions">
         <button id="tl-detail-save" class="btn primary tiny">Save</button>
-        <button id="tl-detail-close" class="btn tiny secondary">Close</button>
+        <button id="tl-detail-close" class="btn secondary tiny">Close</button>
       </div>
     </div>
   </div>
 
-
-  <!-- ===== DOCK STAGING MODAL (FULL HISTORY VIEW) ===== -->
-  <div id="dock-modal-overlay" class="modal-overlay hidden">
-    <div class="modal modal-wide">
-      <h3>Staging Details</h3>
-
-      <div class="dock-modal-grid">
-        <div class="dock-modal-section">
-          <h4>Current Staging</h4>
-          <p><strong>Load ID:</strong> <span id="dock-modal-id"></span></p>
-          <p><strong>Assigned To:</strong> <span id="dock-modal-assigned"></span></p>
-          <p><strong>Staged Location:</strong> <span id="dock-modal-location"></span></p>
-        </div>
-
-        <div class="dock-modal-section">
-          <h4>Status</h4>
-          <p><strong>Load Type:</strong> <span id="dock-modal-type"></span></p>
-          <p><strong>Carrier:</strong> <span id="dock-modal-carrier"></span></p>
-          <p><strong>Ship Date:</strong> <span id="dock-modal-date"></span></p>
-        </div>
-      </div>
-
-      <h4>Full Staging History</h4>
-      <div id="dock-modal-history">
-        <table id="dock-modal-history-table">
-          <thead>
-            <tr>
-              <th>When</th><th>Action</th><th>Assigned To</th><th>Pallets</th><th>Notes</th>
-            </tr>
-          </thead>
-          <tbody id="dock-modal-history-body"></tbody>
-        </table>
-      </div>
-
-      <div class="modal-actions">
-        <button id="dock-modal-close" class="btn tiny secondary">Close</button>
-      </div>
-    </div>
-  </div>
-
-
-  <!-- ===== AUTO-ROUTE EDITOR / CONFIRM MODAL ===== -->
-  <div id="auto-overlay" class="modal-overlay hidden">
-    <div class="modal modal-wide">
-      <h3>Auto-Route Proposal</h3>
-      <p id="auto-summary" class="muted"></p>
-
-      <table class="data-table" id="auto-table">
-        <thead>
-          <tr>
-            <th></th><th>Proposed Load</th><th>Date</th><th>Window</th>
-            <th>Carrier</th><th>PO Count</th><th>Units</th><th>Cartons</th>
-            <th>Fill %</th><th>Notes</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-
-      <div class="modal-actions">
-        <button id="auto-confirm-all" class="btn primary tiny">Confirm All</button>
-        <button id="auto-confirm-selected" class="btn tiny">Confirm Selected</button>
-        <button id="auto-cancel" class="btn tiny secondary">Cancel</button>
-      </div>
-    </div>
-  </div>
-
-
-  <!-- ===== SUGGESTION MODAL ===== -->
-  <div id="suggest-overlay" class="modal-overlay hidden">
-    <div class="modal">
-      <h3>Routing Suggestions</h3>
-      <div id="suggest-message" class="muted"></div>
-
-      <div id="suggest-existing"></div>
-
-      <h4>Available Time Slots</h4>
-      <div id="suggest-slots" class="slots-grid"></div>
-
-      <div class="modal-actions">
-        <button id="suggest-apply" class="btn primary tiny">Apply</button>
-        <button id="suggest-close" class="btn tiny secondary">Close</button>
-      </div>
-    </div>
-  </div>
-
-
-  <!-- LOAD SCRIPT -->
   <script src="./script.js"></script>
-
 </body>
 </html>
