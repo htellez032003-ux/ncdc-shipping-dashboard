@@ -1,2198 +1,1556 @@
-// script.js — NCDC Dashboard (persistent + smart router + SPS)
+// NCDC Shipping Dashboard - Full JavaScript
+// Version 2.0 with all 15 enhancements
 
-/* ========= STORAGE / CONSTANTS ========= */
-const STORAGE_KEY = "ncdcShippingStateV7";
+/* ========= CONSTANTS ========= */
+const STORAGE_KEY = "ncdcShippingStateV10";
 const MAX_UNITS_PER_TRUCK = 30000;
 const MAX_CARTS_PER_TRUCK = 2600;
 
+const TIME_BLOCKS = [
+  { window: "08:00-10:00", label: "8am-10am" },
+  { window: "10:00-12:00", label: "10am-12pm" },
+  { window: "12:00-14:00", label: "12pm-2pm" },
+  { window: "14:00-16:00", label: "2pm-4pm" },
+  { window: "16:00-18:00", label: "4pm-6pm" }
+];
+
+const LOAD_TYPES = ["LTL", "Truckload", "Floorload", "Small Parcel"];
+
+// Generate staging locations
+const SL_LANES = [];
+for (let i = 18; i <= 220; i++) SL_LANES.push(`SL${i}A`);
+for (let i = 18; i <= 99; i++) SL_LANES.push(`SL${i}B`);
+for (let i = 18; i <= 25; i++) SL_LANES.push(`SL${i}C`);
+
+const DD_DOORS = [];
+for (let i = 2; i <= 6; i++) DD_DOORS.push(`DD${i}`);
+for (let i = 12; i <= 73; i++) DD_DOORS.push(`DD${i}`);
+
+const USER_ROLES = {
+  admin: { label: "Admin", permissions: ["all"] },
+  router: { label: "Router", permissions: ["orders", "truckloads", "calendar", "metrics", "history"] },
+  dock: { label: "Dock Lead", permissions: ["dock", "todays", "truckloads", "history"] },
+  supervisor: { label: "Supervisor", permissions: ["all"] }
+};
+
 /* ========= STATE ========= */
 const appState = {
-  session: { authed: false, email: "" },
+  session: { authed: false, email: "", role: "admin" },
   orders: [],
   truckloads: [],
   history: [],
-  team: [
-    {
-      id: crypto.randomUUID(),
-      name: "Router 1",
-      email: "router@example.com",
-      role: "router",
-      shift: "1st",
-      active: true,
-      theme: "light",
-      lang: "en"
-    },
-    {
-      id: crypto.randomUUID(),
-      name: "Dock Lead",
-      email: "dock@example.com",
-      role: "dock",
-      shift: "1st",
-      active: true,
-      theme: "light",
-      lang: "en"
-    }
-  ],
+  changeLog: [],
+  alerts: [],
+  savedFilters: [],
   settings: {
     maxLTL: 4,
     maxTL: 3,
-    maxFloor: 2,
-    blocks: [
-      { window: "08:00am-10:00am", max: { LTL: 4, Truckload: 2, Floorload: 1, SPS: Infinity, "Small Parcel": 4 } },
-      { window: "10:00am-12:00pm", max: { LTL: 4, Truckload: 2, Floorload: 1, SPS: Infinity, "Small Parcel": 4 } },
-      { window: "01:00pm-03:00pm", max: { LTL: 4, Truckload: 3, Floorload: 2, SPS: Infinity, "Small Parcel": 4 } },
-      { window: "03:00pm-05:00pm", max: { LTL: 4, Truckload: 3, Floorload: 2, SPS: Infinity, "Small Parcel": 4 } }
-    ],
-    lastHistorySweepYMD: ""
+    maxFloor: 2
   }
 };
 
-/* ========= IndexedDB (fallback mirror) ========= */
-let _idb;
+// UI State
+const selectedPOs = new Set();
+const selectedTrucks = new Set();
+const dynamicFilters = [];
+let filteredOrders = [];
+let autoProposals = [];
+let calAnchor = new Date();
 
-async function idbOpen() {
-  return new Promise((res, rej) => {
-    const r = indexedDB.open("ncdcDB", 1);
-    r.onupgradeneeded = () => r.result.createObjectStore("state");
-    r.onsuccess = () => res(r.result);
-    r.onerror = () => rej(r.error);
-  });
-}
-
-async function idbGet(key) {
-  try {
-    _idb = _idb || (await idbOpen());
-    return await new Promise((res, rej) => {
-      const tx = _idb.transaction("state", "readonly")
-        .objectStore("state")
-        .get(key);
-      tx.onsuccess = () => res(tx.result);
-      tx.onerror = () => rej(tx.error);
-    });
-  } catch {
-    return null;
-  }
-}
-
-async function idbSet(key, val) {
-  try {
-    _idb = _idb || (await idbOpen());
-    return await new Promise((res, rej) => {
-      const tx = _idb.transaction("state", "readwrite")
-        .objectStore("state")
-        .put(val, key);
-      tx.onsuccess = () => res(true);
-      tx.onerror = () => rej(tx.error);
-    });
-  } catch {
-    return false;
-  }
-}
-
-/* ========= UTILS ========= */
+/* ========= UTILITIES ========= */
 const $ = (id) => document.getElementById(id);
 const todayYMD = () => new Date().toISOString().slice(0, 10);
 
-function loadStateSync() {
-  try {
-    Object.assign(appState, JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"));
-  } catch {}
-}
+const parseYMD = (str) => {
+  if (!str) return null;
+  const d = new Date(str);
+  return isNaN(d) ? null : d;
+};
 
-async function loadStateAsync() {
-  const s = await idbGet(STORAGE_KEY);
-  if (s) {
-    Object.assign(appState, s);
-    renderAll();
+const ymd = (d) => new Date(d).toISOString().slice(0, 10);
+
+const addDays = (d, n) => {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+};
+
+const sameDate = (a, b) => {
+  const x = new Date(a);
+  const y = new Date(b);
+  x.setHours(0, 0, 0, 0);
+  y.setHours(0, 0, 0, 0);
+  return x.getTime() === y.getTime();
+};
+
+const mostCommon = (arr) => {
+  const counts = {};
+  let max = 0;
+  let result = "";
+  arr.forEach(v => {
+    const k = v || "";
+    counts[k] = (counts[k] || 0) + 1;
+    if (counts[k] > max) {
+      max = counts[k];
+      result = k;
+    }
+  });
+  return result;
+};
+
+const sumNumber = (rows, col) => {
+  return rows.reduce((s, x) => s + (parseFloat(String(x[col] || "").replace(/,/g, "")) || 0), 0);
+};
+
+const earliestDate = (arr) => {
+  const dates = arr.map(x => parseYMD(x)).filter(x => x && x > 0);
+  if (!dates.length) return "";
+  dates.sort((a, b) => a - b);
+  return ymd(dates[0]);
+};
+
+const isSPSCarrier = (carrier) => {
+  const c = (carrier || "").toUpperCase();
+  return c.includes("UPS") || c.includes("FXG") || c.includes("FEDEX GROUND") || c.includes("SPS");
+};
+
+/* ========= STORAGE ========= */
+function loadState() {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      const data = JSON.parse(stored);
+      Object.assign(appState, data);
+    }
+  } catch (e) {
+    console.error("Load error:", e);
   }
 }
 
 function saveState() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
-    idbSet(STORAGE_KEY, appState);
-  } catch {}
-}
-
-function mostCommon(a) {
-  const c = {};
-  let m = "";
-  let n = 0;
-  for (const v of a) {
-    const k = v || "";
-    c[k] = (c[k] || 0) + 1;
-    if (c[k] > n) {
-      n = c[k];
-      m = k;
-    }
+  } catch (e) {
+    console.error("Save error:", e);
   }
-  return m;
 }
 
-function sumNumber(rows, col) {
-  return rows.reduce(
-    (s, x) => s + (+((x[col] || "").replace(/,/g, "")) || 0),
-    0
-  );
+function logChange(action, details = {}) {
+  appState.changeLog.unshift({
+    id: Date.now(),
+    timestamp: new Date().toISOString(),
+    user: appState.session.email || "System",
+    action,
+    details
+  });
+  if (appState.changeLog.length > 100) {
+    appState.changeLog = appState.changeLog.slice(0, 100);
+  }
+  saveState();
 }
 
-function earliestDate(a) {
-  const d = a
-    .map((x) => x && new Date(x))
-    .filter((x) => x && x > 0);
-  if (!d.length) return "";
-  d.sort((a, b) => a - b);
-  return d[0].toISOString().slice(0, 10);
+/* ========= ALERTS ========= */
+function checkAlerts() {
+  const alerts = [];
+  const today = todayYMD();
+  
+  // Overdue orders
+  appState.orders.forEach(o => {
+    if (o.__priority === "HIGH" && !o["Load ID"]) {
+      alerts.push({
+        id: `overdue-${o.PO}`,
+        type: "error",
+        message: `Order ${o.PO} is overdue and not assigned`
+      });
+    }
+  });
+  
+  // Time blocks near capacity
+  TIME_BLOCKS.forEach(block => {
+    const used = appState.truckloads.filter(t => 
+      t.pickupDate === today && t.pickupWindow === block.window
+    ).length;
+    if (used >= 3) {
+      alerts.push({
+        id: `capacity-${block.window}`,
+        type: "warning",
+        message: `${block.label} is near capacity (${used}/4)`
+      });
+    }
+  });
+  
+  // Trucks without staging
+  appState.truckloads.forEach(t => {
+    if (sameDate(t.pickupDate, today) && !t.stagedLocationSL && !t.stagedLocationDD && t.status !== "Departed") {
+      alerts.push({
+        id: `no-loc-${t.loadId}`,
+        type: "warning",
+        message: `${t.loadId} has no staging location`
+      });
+    }
+  });
+  
+  appState.alerts = alerts;
+  updateAlertsBadge();
 }
 
-function sameDate(a, b) {
-  const x = new Date(a);
-  const y = new Date(b);
-  x.setHours(0, 0, 0, 0);
-  y.setHours(0, 0, 0, 0);
-  return x.getTime() === y.getTime();
-}
-
-function ymd(d) {
-  return new Date(d).toISOString().slice(0, 10);
-}
-
-function parseYMD(str) {
-  if (!str) return null;
-  const d = new Date(str);
-  return isNaN(d) ? null : d;
-}
-
-function addDays(d, n) {
-  const x = new Date(d);
-  x.setDate(x.getDate() + n);
-  return x;
-}
-
-function clampDateToCancel(reco, cancel) {
-  if (!cancel) return reco;
-  const rc = new Date(reco);
-  const cc = new Date(cancel);
-  return rc > cc ? cc : rc;
+function updateAlertsBadge() {
+  const badge = $("alerts-badge");
+  const countEl = $("alerts-count");
+  
+  if (appState.alerts.length > 0) {
+    badge.classList.remove("hidden");
+    const errors = appState.alerts.filter(a => a.type === "error").length;
+    const warnings = appState.alerts.filter(a => a.type === "warning").length;
+    countEl.innerHTML = `${errors > 0 ? `🔴 ${errors}` : ""} ${warnings > 0 ? `⚠️ ${warnings}` : ""}`;
+  } else {
+    badge.classList.add("hidden");
+  }
 }
 
 /* ========= LOGIN / NAV ========= */
-if ($("login-btn"))
-  $("login-btn").onclick = () => {
-    const email = $("login-email").value.trim();
-    const pass = $("login-password").value.trim();
-    const ok =
-      email === "htellez032003@gmail.com" &&
-      pass === "Ltapaprel040523";
-
-    if (ok) {
-      appState.session = { authed: true, email };
-      $("login-error").classList.add("hidden");
-      $("login-screen").classList.add("hidden");
-      $("app-shell").classList.remove("hidden");
-      saveState();
-    } else {
-      $("login-error").classList.remove("hidden");
-    }
-  };
-
-if ($("logout-btn"))
-  $("logout-btn").onclick = () => {
-    appState.session = { authed: false, email: "" };
+function handleLogin() {
+  const email = $("login-email").value.trim();
+  const pass = $("login-password").value.trim();
+  const role = $("login-role").value;
+  
+  if (email === "htellez032003@gmail.com" && pass === "Ltapaprel040523") {
+    appState.session = { authed: true, email, role };
+    $("login-error").classList.add("hidden");
+    $("login-screen").classList.add("hidden");
+    $("app-shell").classList.remove("hidden");
+    updateUserDisplay();
+    applyRolePermissions();
     saveState();
-    $("app-shell").classList.add("hidden");
-    $("login-screen").classList.remove("hidden");
-  };
-
-document.querySelectorAll(".nav-link").forEach((b) => {
-  b.onclick = () => {
-    document
-      .querySelectorAll(".nav-link")
-      .forEach((x) => x.classList.remove("active"));
-    b.classList.add("active");
-    const tab = b.dataset.tab;
-    document
-      .querySelectorAll(".tab-panel")
-      .forEach((p) =>
-        p.classList.toggle("hidden", p.id !== "tab-" + tab)
-      );
-    if (tab === "calendar") renderCalendar();
-  };
-});
-
-/* ========= SUGGESTION MODAL (wire static HTML) ========= */
-(function wireSuggestionModal() {
-  const overlay = $("suggest-overlay");
-  const closeBtn = $("suggest-close");
-  if (!overlay || !closeBtn) return;
-  closeBtn.onclick = () => overlay.classList.add("hidden");
-})();
-
-/* ========= SMART ROUTER MODAL (wire static HTML) ========= */
-(function wireAutoRouterModal() {
-  const overlay = $("auto-overlay");
-  const cancelBtn = $("auto-cancel");
-  if (!overlay || !cancelBtn) return;
-  cancelBtn.onclick = () => overlay.classList.add("hidden");
-})();
-
-/* Add click handler to Auto-Route button */
-(function wireAutoButton() {
-  const btn = $("auto-route-btn");
-  if (!btn) return;
-  btn.onclick = onAutoRouteClicked;
-})();
-
-/* ========= CSV UPLOAD (MERGE, not wipe) ========= */
-if ($("orders-csv"))
-  $("orders-csv").addEventListener("change", (e) => {
-    const f = e.target.files[0];
-    if (!f) return;
-    const r = new FileReader();
-    r.onload = (ev) => {
-      const text = ev.target.result;
-      const incoming = parseCSVRobust(text).map((o) =>
-        computeOrderDerived(o)
-      );
-      mergeOrders(incoming);
-      buildTruckloadsFromOrders(); // preserves manual loads
-      hydrateFilterColumnDropdown();
-      $("csv-updated").textContent =
-        "CSV updated: " + new Date().toLocaleString();
-      renderAll();
-      saveState();
-    };
-    r.readAsText(f);
-  });
-
-/* RFC4180-ish CSV */
-function parseCSVRobust(text) {
-  const rows = [];
-  let row = [], val = "", q = false;
-
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (ch === '"') {
-      if (q && text[i + 1] === '"') {
-        val += '"';
-        i++;
-      } else {
-        q = !q;
-      }
-    } else if (ch === "," && !q) {
-      row.push(val);
-      val = "";
-    } else if ((ch === "\n" || ch === "\r") && !q) {
-      if (val.length || row.length) {
-        row.push(val);
-        rows.push(row);
-        row = [];
-        val = "";
-      }
-      if (ch === "\r" && text[i + 1] === "\n") i++;
-    } else {
-      val += ch;
-    }
+    renderAll();
+  } else {
+    $("login-error").classList.remove("hidden");
   }
-  if (val.length || row.length) {
-    row.push(val);
-    rows.push(row);
-  }
-
-  const header = rows.shift().map((h) => h.trim());
-  return rows
-    .filter((r) => r.some((c) => String(c).trim() !== ""))
-    .map((r) => {
-      const o = {};
-      header.forEach((h, i) => (o[h] = (r[i] ?? "").trim()));
-      return o;
-    });
 }
 
-/* ========= PERSISTENT ORDERS MERGE ========= */
-function mergeOrders(newRows) {
-  const keyFor = (o) =>
-    (o["PO Num"] || "").trim() ||
-    ((o["BOL#"] || "").trim() +
-      "|" +
-      (o["Cust Name"] || "").trim() +
-      "|" +
-      (o["TTL QTY"] || "").trim());
+function handleLogout() {
+  appState.session = { authed: false, email: "", role: "admin" };
+  saveState();
+  $("app-shell").classList.add("hidden");
+  $("login-screen").classList.remove("hidden");
+}
 
-  const map = new Map(appState.orders.map((o) => [keyFor(o), o]));
+function updateUserDisplay() {
+  $("current-user-display").textContent = appState.session.email;
+  $("current-role-badge").textContent = USER_ROLES[appState.session.role]?.label || "User";
+}
 
-  for (const nr of newRows) {
+function applyRolePermissions() {
+  const role = appState.session.role;
+  const perms = USER_ROLES[role]?.permissions || [];
+  const hasAll = perms.includes("all");
+  
+  document.querySelectorAll(".nav-link").forEach(btn => {
+    const tab = btn.dataset.tab;
+    if (hasAll || perms.includes(tab) || tab === "team" || tab === "settings") {
+      btn.style.display = "block";
+    } else {
+      btn.style.display = "none";
+    }
+  });
+}
+
+function setupNavigation() {
+  document.querySelectorAll(".nav-link").forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll(".nav-link").forEach(x => x.classList.remove("active"));
+      btn.classList.add("active");
+      const tab = btn.dataset.tab;
+      document.querySelectorAll(".tab-panel").forEach(p => 
+        p.classList.toggle("hidden", p.id !== "tab-" + tab)
+      );
+      if (tab === "calendar") renderCalendar();
+      if (tab === "metrics") renderMetrics();
+      if (tab === "discrepancies") renderDiscrepancies();
+    };
+  });
+}
+
+/* ========= CSV UPLOAD ========= */
+function handleCSVUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const text = ev.target.result;
+    const parsed = parseCSV(text);
+    const processed = parsed.map(o => computeOrderDerived(o));
+    mergeOrders(processed);
+    $("csv-updated").textContent = "CSV updated: " + new Date().toLocaleString();
+    logChange("CSV Uploaded", { count: processed.length });
+    renderAll();
+    checkAlerts();
+  };
+  reader.readAsText(file);
+}
+
+function parseCSV(text) {
+  const lines = text.split('\n').filter(l => l.trim());
+  if (lines.length < 2) return [];
+  
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+  const rows = [];
+  
+  for (let i = 1; i < lines.length; i++) {
+    const values = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+    const obj = {};
+    headers.forEach((h, idx) => {
+      obj[h] = values[idx] || "";
+    });
+    rows.push(obj);
+  }
+  
+  return rows;
+}
+
+function computeOrderDerived(order) {
+  const units = parseFloat(String(order.Units || 0).replace(/,/g, "")) || 0;
+  const cartons = parseFloat(String(order.Cartons || 0).replace(/,/g, "")) || 0;
+  
+  order.__units = units;
+  order.__cartons = cartons;
+  
+  const startDate = parseYMD(order["Start Date"]);
+  const cancelDate = parseYMD(order["Cancel Date"]);
+  
+  let shipBy = startDate || cancelDate || new Date();
+  order.__shipBy = ymd(shipBy);
+  order.__recommendedShip = cancelDate && shipBy > cancelDate ? ymd(cancelDate) : order.__shipBy;
+  
+  const today = new Date(todayYMD());
+  const sb = parseYMD(order.__shipBy);
+  order.__priority = sb <= today ? "HIGH" : sb <= addDays(today, 1) ? "MEDIUM" : "LOW";
+  order.__isSPS = isSPSCarrier(order.Carrier);
+  
+  return order;
+}
+
+function mergeOrders(newOrders) {
+  const keyFor = (o) => (o.PO || "").trim() || `${o.BOL}|${o.Customer}|${o.Units}`;
+  const map = new Map(appState.orders.map(o => [keyFor(o), o]));
+  
+  newOrders.forEach(nr => {
     const k = keyFor(nr);
     if (map.has(k)) {
       const cur = map.get(k);
-      const kept = {
-        Router: cur.Router,
-        "Scheduled Date": cur["Scheduled Date"],
-        Author: cur["Author#"],
-        "PT STATUS": cur["PT STATUS"],
-        "Load ID": cur["Load ID"]
+      const merged = { ...cur, ...nr,
+        "Ready Date": cur["Ready Date"] || nr["Ready Date"],
+        "Load ID": cur["Load ID"] || nr["Load ID"]
       };
-      const merged = { ...cur, ...nr, ...kept };
       map.set(k, computeOrderDerived(merged));
     } else {
       map.set(k, computeOrderDerived(nr));
     }
-  }
-
+  });
+  
   appState.orders = [...map.values()];
+  saveState();
 }
 
-/* ========= DERIVED ORDER LOGIC ========= */
-function computeOrderDerived(o) {
-  const nUnits =
-    +String(o["TTL QTY"] || 0)
-      .toString()
-      .replace(/,/g, "") || 0;
-  const nCarts =
-    +String(o["Est. Cartons"] || 0)
-      .toString()
-      .replace(/,/g, "") || 0;
-
-  o.__units = nUnits;
-  o.__cartons = nCarts;
-
-  const pickProc = parseYMD(o["Pick Proc Date"]);
-  const startD = parseYMD(o["Start Date"]);
-  const cancelD = parseYMD(o["Cancel Date"]);
-
-  let shipBy;
-  if (pickProc && startD && pickProc > startD) {
-    shipBy = addDays(pickProc, 3);
-  } else if (startD && cancelD) {
-    shipBy = startD < cancelD ? startD : cancelD;
-  } else {
-    shipBy = startD || cancelD || pickProc || new Date();
-  }
-
-  o.__shipBy = ymd(shipBy);
-  o.__recommendedShip = cancelD
-    ? ymd(clampDateToCancel(shipBy, cancelD))
-    : o.__shipBy;
-
-  const t = new Date(todayYMD());
-  const sb = parseYMD(o.__shipBy);
-  o.__priority =
-    sb <= t
-      ? "HIGH"
-      : sb <= addDays(t, 1)
-      ? "MEDIUM"
-      : "LOW";
-
-  return o;
-}
-
-/* ========= GROUPING / BUILD LOADS (baseline, manual preserved) ========= */
-function buildTruckloadsFromOrders() {
-  const manual = appState.truckloads.filter(
-    (t) => !t.autoGenerated
-  );
-  const auto = [];
-
-  // Author-based TLs
-  const withAuth = appState.orders.filter(
-    (o) => (o["Author#"] || "").trim()
-  );
-  const byAuth = new Map();
-  withAuth.forEach((o) => {
-    const k = o["Author#"].trim();
-    if (!byAuth.has(k)) byAuth.set(k, []);
-    byAuth.get(k).push(o);
-  });
-  for (const [loadId, rows] of byAuth) {
-    auto.push(
-      buildLoadFromRows({
-        loadId,
-        rows,
-        loadTypeHint: "Truckload"
-      })
-    );
-  }
-
-  // LTL auto grouping for orders without Author#
-  const noAuth = appState.orders.filter(
-    (o) => !(o["Author#"] || "").trim()
-  );
-  const byLTL = new Map();
-  noAuth.forEach((o) => {
-    const k =
-      (o["Shipper"] || "").trim() +
-      "||" +
-      (o["Ready Date"] || "").trim();
-    if (!byLTL.has(k)) byLTL.set(k, []);
-    byLTL.get(k).push(o);
-  });
-  for (const [, rows] of byLTL) {
-    auto.push(
-      buildLoadFromRows({
-        loadId: "LTL-" + crypto.randomUUID().slice(0, 6),
-        rows,
-        loadTypeHint: "LTL"
-      })
-    );
-  }
-
-  appState.truckloads = [...manual, ...auto];
-}
-
-function buildMasterGroups(rows) {
-  const byM = new Map();
-  rows.forEach((r) => {
-    const m = (r["Master BOL#"] || "").trim();
-    if (!byM.has(m)) byM.set(m, []);
-    byM.get(m).push(r);
-  });
-
-  const groups = [];
-  for (const [m, rs] of byM) {
-    const byB = new Map();
-    rs.forEach((r) => {
-      const b = (r["BOL#"] || "").trim();
-      if (!byB.has(b)) byB.set(b, []);
-      byB.get(b).push(r);
-    });
-
-    const bols = [];
-    for (const [b, bs] of byB) {
-      bols.push({
-        bol: b,
-        pos: bs.map((x) => ({
-          po: x["PO Num"],
-          customer: x["Cust Name"],
-          cartons: +(x["Est. Cartons"] || 0),
-          pallets: +(x["Est. Pallet"] || 0)
-        }))
-      });
-    }
-
-    groups.push({ masterBol: m, bols });
-  }
-  return groups;
-}
-
-function buildLoadFromRows({ loadId, rows, loadTypeHint }) {
-  const customer = mostCommon(rows.map((r) => r["Cust Name"] || ""));
-  const carrier = mostCommon(rows.map((r) => r["Shipper"] || ""));
-  const pickupDate = earliestDate(rows.map((r) => r["Ready Date"] || ""));
-  const bolCommon = mostCommon(rows.map((r) => r["BOL#"] || ""));
-  const cartons = sumNumber(rows, "Est. Cartons");
-  const pallets = sumNumber(rows, "Est. Pallet");
-  const weight = sumNumber(rows, "Total Weight");
-  const cube = sumNumber(rows, "Total Cubic");
-  const masterGroups = buildMasterGroups(rows);
-
-  return {
-    loadId,
-    autoGenerated: true,
-    loadType: loadTypeHint || "Truckload",
-    customer,
-    carrier,
-    pickupDate,
-    pickupWindow: "",
-    bol: bolCommon,
-    cartons,
-    pallets,
-    weight,
-    cube,
-    stagedLocation: "",
-    assignedTo: [],
-    actualPallets: 0,
-    loadedBy: [],
-    status: "Unstaged",
-    departed: false,
-    masterGroups,
-    stagingLog: [] // for dock history
-  };
-}
-
-/* ========= FILTER UI (Orders) ========= */
-const dynamicFilters = [];
-
-function hydrateFilterColumnDropdown() {
-  const sel = $("orders-col-filter");
-  if (!sel) return;
-  const headers = Array.from(
-    document.querySelectorAll("#orders-head th")
-  )
-    .map((th) => th.textContent.trim())
-    .slice(1);
-  sel.innerHTML = headers
-    .map((h) => `<option value="${h}">${h}</option>`)
-    .join("");
-}
-
-if ($("add-col-filter"))
-  $("add-col-filter").onclick = () => {
-    const col = $("orders-col-filter").value;
-    const val = $("orders-col-value").value.trim();
-    if (!col || !val) return;
-    dynamicFilters.push({ col, value: val });
-    $("orders-col-value").value = "";
-    renderActiveFilters();
-    renderOrders();
-  };
-
-if ($("clear-filters"))
-  $("clear-filters").onclick = () => {
-    dynamicFilters.length = 0;
-    $("orders-search").value = "";
-    renderActiveFilters();
-    renderOrders(true);
-  };
-
-function renderActiveFilters() {
-  const box = $("active-filters");
-  if (!box) return;
-  box.innerHTML = dynamicFilters
-    .map(
-      (f, i) =>
-        `<span class="chip">${f.col} = "${f.value}" <button data-del="${i}" class="chip-x">×</button></span>`
-    )
-    .join("");
-  box
-    .querySelectorAll("[data-del]")
-    .forEach(
-      (b) =>
-        (b.onclick = () => {
-          dynamicFilters.splice(+b.dataset.del, 1);
-          renderActiveFilters();
-          renderOrders();
-        })
-    );
-}
-
-/* ========= ORDERS RENDER ========= */
-let filteredOrders = [];
-const selectedPOs = new Set();
-
-function renderOrders(reset = false) {
-  if (reset) filteredOrders = appState.orders.slice();
+/* ========= ORDERS RENDERING ========= */
+function renderOrders() {
   const tb = $("orders-body");
   if (!tb) return;
-
+  
   const q = ($("orders-search")?.value || "").toLowerCase();
-
-  filteredOrders = appState.orders.filter((o) => {
-    const quick = Object.values(o).some((v) =>
+  
+  filteredOrders = appState.orders.filter(o => {
+    const quick = Object.values(o).some(v => 
       String(v || "").toLowerCase().includes(q)
     );
     if (!quick) return false;
+    
     for (const f of dynamicFilters) {
       if (String(o[f.col] || "") !== f.value) return false;
     }
     return true;
   });
-
+  
   tb.innerHTML = "";
-  filteredOrders.forEach((o) => {
-    const po = o["PO Num"] || "";
+  
+  filteredOrders.forEach(o => {
+    const po = o.PO || "";
     const tr = document.createElement("tr");
-    const dueClass =
-      o.__priority === "HIGH"
-        ? "row-danger"
-        : o.__priority === "MEDIUM"
-        ? "row-warn"
-        : "";
-    tr.className = dueClass;
+    
+    const rowClass = o.__priority === "HIGH" ? "row-danger" : 
+                     o.__priority === "MEDIUM" ? "row-warn" : "";
+    tr.className = rowClass;
+    
+    const priorityBadge = `<span class="priority-badge priority-${o.__priority.toLowerCase()}">${o.__priority}</span>`;
+    const spsBadge = o.__isSPS ? '<span class="sps-badge">SPS</span>' : '';
+    
     tr.innerHTML = `
-      <td><input type="checkbox" class="po-check" data-po="${po}" ${
-      selectedPOs.has(po) ? "checked" : ""
-    }></td>
-      <td>${o["Division"] || ""}</td>
-      <td>${o["BOL#"] || ""}</td>
-      <td>${o["Master BOL#"] || ""}</td>
+      <td><input type="checkbox" class="po-check" data-po="${po}" ${selectedPOs.has(po) ? "checked" : ""}></td>
       <td>${po}</td>
-      <td>${o["Customer"] || ""}</td>
-      <td>${o["Cust Name"] || ""}</td>
-      <td>${o["Shipper"] || ""}</td>
-      <td>${o["TTL QTY"] || ""}</td>
-      <td>${o["TTL Amt"] || ""}</td>
-      <td>${o["Total Weight"] || ""}</td>
-      <td>${o["Total Cubic"] || ""}</td>
-      <td>${o["Est. Cartons"] || ""}</td>
-      <td>${o["Est. Pallet"] || ""}</td>
-      <td>${o["Pick Proc Date"] || ""}</td>
+      <td>${o.Customer || ""}</td>
+      <td>${o.Carrier || ""}${spsBadge}</td>
+      <td>${o.Units || ""}</td>
+      <td>${o.Cartons || ""}</td>
+      <td>${o.BOL || ""}</td>
+      <td>${o["Master BOL"] || ""}</td>
       <td>${o["Start Date"] || ""}</td>
       <td>${o["Cancel Date"] || ""}</td>
-      <td>${o["Router"] || ""}</td>
-      <td>${o["Route Date"] || ""}</td>
-      <td>${o["Scheduled Date"] || ""}</td>
-      <td>${o["Ready Date"] || ""}</td>
-      <td>${o["Author#"] || ""}</td>
-      <td>${o["PT STATUS"] || ""}</td>
-      <td>${o["Load ID"] || ""}</td>
+      <td>${priorityBadge}</td>
+      <td>${o["Load ID"] || "-"}</td>
     `;
-    tr.title = `Ship By: ${o.__shipBy} • Recommended: ${o.__recommendedShip} • Priority: ${o.__priority}`;
     tb.appendChild(tr);
   });
-
-  document.querySelectorAll(".po-check").forEach((chk) => {
+  
+  // Attach checkbox handlers
+  document.querySelectorAll(".po-check").forEach(chk => {
     chk.onchange = (e) => {
       const po = e.target.dataset.po;
       if (e.target.checked) selectedPOs.add(po);
       else selectedPOs.delete(po);
       $("selected-count").textContent = selectedPOs.size;
-      saveState();
     };
   });
-
+  
   $("selected-count").textContent = selectedPOs.size;
+  updateAssignDropdown();
+}
 
+function updateAssignDropdown() {
   const sel = $("assign-existing-load");
   if (sel) {
-    sel.innerHTML =
-      `<option value="">Assign to existing load...</option>` +
-      appState.truckloads
-        .map(
-          (t) =>
-            `<option value="${t.loadId}">${t.loadId} — ${t.customer || ""}</option>`
-        )
-        .join("");
+    sel.innerHTML = `<option value="">Assign to existing...</option>` +
+      appState.truckloads.map(t => 
+        `<option value="${t.loadId}">${t.loadId} — ${t.customer || ""}</option>`
+      ).join("");
   }
 }
 
-if ($("orders-search"))
-  $("orders-search").oninput = () => renderOrders();
+/* ========= QUICK FILTERS ========= */
+function applyQuickFilter(type) {
+  dynamicFilters.length = 0;
+  $("orders-search").value = "";
+  
+  if (type === "high") {
+    dynamicFilters.push({ col: "__priority", value: "HIGH" });
+  } else if (type === "unassigned") {
+    // Will filter in render
+    filteredOrders = appState.orders.filter(o => !o["Load ID"]);
+    renderOrdersFiltered(filteredOrders);
+    return;
+  } else if (type === "today") {
+    dynamicFilters.push({ col: "__shipBy", value: todayYMD() });
+  }
+  
+  renderOrders();
+}
 
-// select-all
-if ($("select-all-orders"))
-  $("select-all-orders").onchange = (e) => {
-    const checked = e.target.checked;
-    document
-      .querySelectorAll("#orders-body .po-check")
-      .forEach((chk) => {
-        chk.checked = checked;
-        const po = chk.dataset.po;
-        if (checked) selectedPOs.add(po);
-        else selectedPOs.delete(po);
-      });
-    $("selected-count").textContent = selectedPOs.size;
-    saveState();
-  };
-
-/* ========= CAPACITY + SLOTS HELPERS ========= */
-function capacityCheck(load, rows) {
-  if (load.loadType === "SPS") {
-    return {
-      unitsOK: true,
-      cartsOK: true,
-      unitsNow: 0,
-      cartsNow: 0
+function renderOrdersFiltered(orders) {
+  const tb = $("orders-body");
+  tb.innerHTML = "";
+  
+  orders.forEach(o => {
+    const po = o.PO || "";
+    const tr = document.createElement("tr");
+    const rowClass = o.__priority === "HIGH" ? "row-danger" : 
+                     o.__priority === "MEDIUM" ? "row-warn" : "";
+    tr.className = rowClass;
+    
+    const priorityBadge = `<span class="priority-badge priority-${o.__priority.toLowerCase()}">${o.__priority}</span>`;
+    const spsBadge = o.__isSPS ? '<span class="sps-badge">SPS</span>' : '';
+    
+    tr.innerHTML = `
+      <td><input type="checkbox" class="po-check" data-po="${po}" ${selectedPOs.has(po) ? "checked" : ""}></td>
+      <td>${po}</td>
+      <td>${o.Customer || ""}</td>
+      <td>${o.Carrier || ""}${spsBadge}</td>
+      <td>${o.Units || ""}</td>
+      <td>${o.Cartons || ""}</td>
+      <td>${o.BOL || ""}</td>
+      <td>${o["Master BOL"] || ""}</td>
+      <td>${o["Start Date"] || ""}</td>
+      <td>${o["Cancel Date"] || ""}</td>
+      <td>${priorityBadge}</td>
+      <td>${o["Load ID"] || "-"}</td>
+    `;
+    tb.appendChild(tr);
+  });
+  
+  document.querySelectorAll(".po-check").forEach(chk => {
+    chk.onchange = (e) => {
+      const po = e.target.dataset.po;
+      if (e.target.checked) selectedPOs.add(po);
+      else selectedPOs.delete(po);
+      $("selected-count").textContent = selectedPOs.size;
     };
-  }
-  const unitsNow = rows.reduce((s, r) => s + (r.__units || 0), 0);
-  const cartsNow = rows.reduce((s, r) => s + (r.__cartons || 0), 0);
-  const loadUnits = 0;
-  const loadCarts = +load.cartons || 0;
-  const unitsOK = loadUnits + unitsNow <= MAX_UNITS_PER_TRUCK;
-  const cartsOK = loadCarts + cartsNow <= MAX_CARTS_PER_TRUCK;
-  return { unitsOK, cartsOK, unitsNow, cartsNow };
-}
-
-function getSlotLimit(window, loadType) {
-  const block = appState.settings.blocks.find((b) => b.window === window);
-  if (block) {
-    if (loadType === "SPS") return Infinity;
-    if (loadType === "Small Parcel")
-      return block.max["Small Parcel"] ?? appState.settings.maxLTL;
-    return (
-      block.max[loadType] ??
-      (loadType === "LTL"
-        ? appState.settings.maxLTL
-        : loadType === "Truckload"
-        ? appState.settings.maxTL
-        : appState.settings.maxFloor)
-    );
-  }
-
-  if (loadType === "SPS") return Infinity;
-  if (loadType === "Small Parcel") return appState.settings.maxLTL;
-
-  return loadType === "LTL"
-    ? appState.settings.maxLTL
-    : loadType === "Truckload"
-    ? appState.settings.maxTL
-    : appState.settings.maxFloor;
-}
-
-function getSlotUsage(dateYMD, window, loadType) {
-  return appState.truckloads.filter(
-    (l) =>
-      l.pickupDate === dateYMD &&
-      l.loadType === loadType &&
-      ((l.pickupWindow || "").trim() || "(unspecified)") ===
-        (window || "(unspecified)")
-  ).length;
-}
-
-function buildMasterGroupsFromOrders(rows) {
-  return buildMasterGroups(rows);
-}
-
-/* ========= ORDER <-> LOAD LINKING ========= */
-function attachOrdersToLoad(rows, loadId) {
-  rows.forEach((o) => {
-    const current = (o["Load ID"] || "").split(",").map((x) => x.trim()).filter(Boolean);
-    if (!current.includes(loadId)) current.push(loadId);
-    o["Load ID"] = current.join(", ");
   });
 }
 
-/* ========= MERGE INTO EXISTING LOAD ========= */
-function mergeRowsIntoLoad(t, rows) {
-  const merged = buildMasterGroupsFromOrders(rows);
-  merged.forEach((m) => {
-    let mg = t.masterGroups.find((x) => x.masterBol === m.masterBol);
-    if (!mg) {
-      t.masterGroups.push(m);
-    } else {
-      m.bols.forEach((nb) => {
-        let b = mg.bols.find((x) => x.bol === nb.bol);
-        if (!b) mg.bols.push(nb);
-        else b.pos = [...b.pos, ...nb.pos];
-      });
-    }
-  });
-  t.cartons += sumNumber(rows, "Est. Cartons");
-  t.pallets += sumNumber(rows, "Est. Pallet");
-  t.weight += sumNumber(rows, "Total Weight");
-  t.cube += sumNumber(rows, "Total Cubic");
-}
-
-/* ========= STAGING HISTORY LOGGING ========= */
-function logStagingEvent(load, action, extra = {}) {
-  if (!load.stagingLog) load.stagingLog = [];
-  load.stagingLog.push({
-    ts: new Date().toISOString(),
-    action,
-    assignedTo: (load.assignedTo || []).join(", "),
-    location: load.stagedLocation || "",
-    pallets: load.actualPallets || 0,
-    note: extra.note || ""
-  });
-}
-
-/* ========= SUGGESTION MODAL DRIVER ========= */
-let _suggestContext = null;
-
-function showSuggestionModal({ reason, rows, targetLoad }) {
-  const overlay = $("suggest-overlay");
-  const msg = $("suggest-message");
-  const exDiv = $("suggest-existing");
-  const slotDiv = $("suggest-slots");
-
-  const commonCarrier = mostCommon(rows.map((r) => r["Shipper"] || ""));
-  const recoDate = rows.length
-    ? earliestDate(rows.map((r) => r.__recommendedShip))
-    : "";
-  const candidates = appState.truckloads
-    .map((t) => {
-      const cap = capacityCheck(t, rows);
-      const score =
-        (t.carrier === commonCarrier ? 1 : 0) +
-        (t.pickupDate === recoDate ? 2 : 0) +
-        (cap.unitsOK && cap.cartsOK ? 2 : -5);
-      return { load: t, cap, score };
-    })
-    .sort((a, b) => b.score - a.score)
-    .filter((c) => c.cap.unitsOK && c.cap.cartsOK)
-    .slice(0, 3);
-
-  const unitsSel = rows.reduce((s, r) => s + (r.__units || 0), 0);
-  const cartsSel = rows.reduce((s, r) => s + (r.__cartons || 0), 0);
-
-  msg.textContent = `${reason}${
-    rows.length
-      ? ` • Selected: ${unitsSel.toLocaleString()} units, ${cartsSel.toLocaleString()} cartons`
-      : ""
-  }${recoDate ? ` • Target date ${recoDate}` : ""}`;
-
-  if (candidates.length) {
-    exDiv.innerHTML = `
-      <h4>Top existing trucks</h4>
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th></th><th>Load ID</th><th>Date</th><th>Window</th><th>Carrier</th><th>Cartons Now</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${candidates
-            .map(
-              (c, i) => `
-            <tr>
-              <td><input type="radio" name="recoLoad" value="${
-                c.load.loadId
-              }" ${i === 0 ? "checked" : ""}></td>
-              <td>${c.load.loadId}</td>
-              <td>${c.load.pickupDate || ""}</td>
-              <td>${c.load.pickupWindow || ""}</td>
-              <td>${c.load.carrier || ""}</td>
-              <td>${(c.load.cartons || 0).toLocaleString()}</td>
-            </tr>`
-            )
-            .join("")}
-        </tbody>
-      </table>`;
-  } else {
-    exDiv.innerHTML = `<h4>No compatible existing trucks found.</h4>`;
-  }
-
-  const loadType = "Truckload";
-  const windows = appState.settings.blocks.length
-    ? appState.settings.blocks.map((b) => b.window)
-    : ["(unspecified)"];
-
-  slotDiv.innerHTML = windows
-    .map((w) => {
-      const used = getSlotUsage(recoDate, w, loadType);
-      const lim = getSlotLimit(w, loadType);
-      const can = used < lim;
-      return `<label class="slot-pill ${can ? "" : "slot-full"}">
-        <input type="radio" name="slotPick" value="${w}" ${
-        can && !candidates.length ? "checked" : ""
-      } ${can ? "" : "disabled"}>
-        <span>${w}</span><span class="muted"> ${used}/${lim === Infinity ? "∞" : lim}</span>
-      </label>`;
-    })
-    .join("");
-
-  _suggestContext = {
-    rows,
-    recoDate,
-    loadType,
-    targetLoadId: targetLoad?.loadId || null
-  };
-  overlay.classList.remove("hidden");
-}
-
-if ($("suggest-apply"))
-  $("suggest-apply").onclick = () => {
-    if (!_suggestContext) {
-      $("suggest-overlay").classList.add("hidden");
-      return;
-    }
-    const rows = _suggestContext.rows;
-    const selectedExisting = document.querySelector(
-      "input[name='recoLoad']:checked"
-    );
-
-    if (selectedExisting) {
-      const t = appState.truckloads.find(
-        (x) => x.loadId === selectedExisting.value
-      );
-      if (t) {
-        const cap = capacityCheck(t, rows);
-        if (!(cap.unitsOK && cap.cartsOK)) {
-          alert("Selected truck no longer fits.");
-        } else {
-          mergeRowsIntoLoad(t, rows);
-          attachOrdersToLoad(rows, t.loadId);
-          logStagingEvent(t, "Orders reassigned by suggestion", { note: "Suggestion modal" });
-        }
-      }
-      $("suggest-overlay").classList.add("hidden");
-      renderAll();
-      saveState();
-      return;
-    }
-
-    const slot = document.querySelector("input[name='slotPick']:checked");
-    const pickWin = slot ? slot.value : "(unspecified)";
-    const id = "LOAD-" + (appState.truckloads.length + 1);
-    const base = buildLoadFromRows({
-      loadId: id,
-      rows,
-      loadTypeHint: "Truckload"
-    });
-
-    base.autoGenerated = false;
-    base.pickupDate = _suggestContext.recoDate || base.pickupDate;
-    base.pickupWindow = pickWin;
-    base.carrier =
-      mostCommon(rows.map((r) => r["Shipper"] || "")) || base.carrier;
-
-    appState.truckloads.push(base);
-    attachOrdersToLoad(rows, id);
-    $("suggest-overlay").classList.add("hidden");
-    renderAll();
-    saveState();
-  };
-
-/* Assign selected POs to an existing load */
-if ($("assign-pos-to-load"))
-  $("assign-pos-to-load").onclick = () => {
-    const id = $("assign-existing-load").value;
-    if (!id || selectedPOs.size === 0) return;
-    const t = appState.truckloads.find((x) => x.loadId === id);
-    if (!t) return;
-
-    const rows = appState.orders.filter((o) =>
-      selectedPOs.has(o["PO Num"] || "")
-    );
-    const cap = capacityCheck(t, rows);
-    const schedMismatch = false;
-
-    if (!cap.unitsOK || !cap.cartsOK || schedMismatch) {
-      showSuggestionModal({
-        reason: !cap.cartsOK
-          ? "Capacity exceeded for selected truck"
-          : "Schedule conflict detected",
-        rows,
-        targetLoad: t
-      });
-      return;
-    }
-
-    mergeRowsIntoLoad(t, rows);
-    attachOrdersToLoad(rows, t.loadId);
-    logStagingEvent(t, "Orders added to load", { note: "Assign to existing" });
-    renderAll();
-    saveState();
-  };
-
-/* ========= CREATE TRUCKLOAD MODAL ========= */
-if ($("create-truckload-btn"))
-  $("create-truckload-btn").onclick = () => {
-    if (!selectedPOs.size) {
-      alert("Select at least one PO.");
-      return;
-    }
-    $("modal-selected-pos").textContent =
-      "POs: " + [...selectedPOs].join(", ");
-
-    const rows = appState.orders.filter((o) =>
-      selectedPOs.has(o["PO Num"] || "")
-    );
-    const recoDate = earliestDate(rows.map((r) => r.__recommendedShip));
-
-    $("tl-load-id").value = "LOAD-" + (appState.truckloads.length + 1);
-    $("tl-load-type").value = "Truckload";
-    $("tl-pickup-date").value = recoDate || "";
-    $("tl-pickup-window").value = "";
-    $("tl-carrier").value = mostCommon(rows.map((r) => r["Shipper"] || ""));
-    $("tl-customer").value = mostCommon(rows.map((r) => r["Cust Name"] || ""));
-    $("tl-bol").value = mostCommon(rows.map((r) => r["BOL#"] || ""));
-    $("tl-cartons").value = rows.reduce(
-      (s, r) => s + (r.__cartons || 0),
-      0
-    );
-    $("tl-pallets").value = sumNumber(rows, "Est. Pallet");
-
-    $("modal-overlay").classList.remove("hidden");
-  };
-
-if ($("tl-cancel"))
-  $("tl-cancel").onclick = () =>
-    $("modal-overlay").classList.add("hidden");
-
-if ($("tl-save"))
-  $("tl-save").onclick = () => {
-    const id =
-      $("tl-load-id").value.trim() ||
-      "LOAD-" + (appState.truckloads.length + 1);
-    const rows = appState.orders.filter((o) =>
-      selectedPOs.has(o["PO Num"] || "")
-    );
-
-    const base = buildLoadFromRows({
-      loadId: id,
-      rows,
-      loadTypeHint: $("tl-load-type").value
-    });
-
-    base.autoGenerated = false;
-    base.pickupDate = $("tl-pickup-date").value || base.pickupDate;
-    base.pickupWindow = $("tl-pickup-window").value.trim();
-    base.carrier = $("tl-carrier").value.trim() || base.carrier;
-    base.customer = $("tl-customer").value.trim() || base.customer;
-    base.bol = $("tl-bol").value.trim() || base.bol;
-
-    const used = getSlotUsage(
-      base.pickupDate,
-      base.pickupWindow,
-      base.loadType
-    );
-    const lim = getSlotLimit(base.pickupWindow, base.loadType);
-
-    const cartsSel = rows.reduce(
-      (s, r) => s + (r.__cartons || 0),
-      0
-    );
-    const cartsOK =
-      base.loadType === "SPS"
-        ? true
-        : cartsSel <= MAX_CARTS_PER_TRUCK;
-    const withinSlots = used < lim;
-
-    if (!cartsOK || !withinSlots) {
-      showSuggestionModal({
-        reason: !withinSlots
-          ? `No slots left for ${base.loadType} at ${base.pickupWindow}`
-          : `Carton capacity would exceed ${MAX_CARTS_PER_TRUCK}`,
-        rows
-      });
-      return;
-    }
-
-    appState.truckloads.push(base);
-    attachOrdersToLoad(rows, id);
-    logStagingEvent(base, "Truckload created from Orders");
-    $("modal-overlay").classList.add("hidden");
-    renderAll();
-    saveState();
-  };
-
-/* ========= SMART AUTO-ROUTER ENGINE (with SPS) ========= */
-function onAutoRouteClicked() {
-  const useSelected = selectedPOs.size > 0;
-  const rows = useSelected
-    ? appState.orders.filter((o) => selectedPOs.has(o["PO Num"] || ""))
-    : filteredOrders.slice();
-
-  if (!rows.length) {
-    alert("No orders selected or visible.");
+/* ========= TRUCKLOAD CREATION ========= */
+function showCreateTruckModal() {
+  if (selectedPOs.size === 0) {
+    alert("Select at least one PO.");
     return;
   }
-
-  const proposals = buildAutoProposals(rows);
-  renderAutoModal(proposals);
+  
+  const rows = appState.orders.filter(o => selectedPOs.has(o.PO));
+  
+  $("modal-selected-pos").textContent = `POs: ${[...selectedPOs].slice(0, 5).join(", ")}${selectedPOs.size > 5 ? "..." : ""}`;
+  $("tl-load-id").value = `LOAD-${Date.now()}`;
+  $("tl-load-type").value = "Truckload";
+  $("tl-pickup-date").value = earliestDate(rows.map(r => r.__recommendedShip));
+  $("tl-pickup-window").value = TIME_BLOCKS[0].window;
+  $("tl-carrier").value = mostCommon(rows.map(r => r.Carrier));
+  $("tl-customer").value = mostCommon(rows.map(r => r.Customer));
+  $("tl-bol").value = mostCommon(rows.map(r => r.BOL));
+  
+  $("modal-overlay").classList.remove("hidden");
 }
 
-function isSPSCarrier(shipperRaw) {
-  const s = (shipperRaw || "").toUpperCase();
-  return s.includes("UPS") || s.includes("FXG") || s.includes("FEDEX GROUND") || s.includes("SPS");
-}
-
-/* --- auto-routing core --- */
-function buildAutoProposals(rows) {
-  const sorted = [...rows].sort((a, b) => {
-    const pa =
-      a.__priority === "HIGH"
-        ? 0
-        : a.__priority === "MEDIUM"
-        ? 1
-        : 2;
-    const pb =
-      b.__priority === "HIGH"
-        ? 0
-        : b.__priority === "MEDIUM"
-        ? 1
-        : 2;
-    const p = pa - pb;
-    if (p !== 0) return p;
-    return (a.__recommendedShip || "").localeCompare(
-      b.__recommendedShip || ""
-    );
+function saveTruckload() {
+  const rows = appState.orders.filter(o => selectedPOs.has(o.PO));
+  
+  const newTruck = {
+    loadId: $("tl-load-id").value.trim() || `LOAD-${Date.now()}`,
+    loadType: $("tl-load-type").value,
+    customer: $("tl-customer").value.trim() || mostCommon(rows.map(r => r.Customer)),
+    carrier: $("tl-carrier").value.trim() || mostCommon(rows.map(r => r.Carrier)),
+    pickupDate: $("tl-pickup-date").value,
+    pickupWindow: $("tl-pickup-window").value,
+    bol: $("tl-bol").value.trim() || mostCommon(rows.map(r => r.BOL)),
+    masterBol: mostCommon(rows.map(r => r["Master BOL"])),
+    cartons: sumNumber(rows, "Cartons"),
+    units: sumNumber(rows, "Units"),
+    weight: sumNumber(rows, "Weight"),
+    stagedLocationSL: "",
+    stagedLocationDD: "",
+    assignedTo: [],
+    loadedBy: [],
+    status: "Not Started",
+    departed: false,
+    orders: rows.map(o => o.PO),
+    stagingLog: [{
+      ts: new Date().toISOString(),
+      action: "Truckload created",
+      user: appState.session.email,
+      note: `Created with ${rows.length} orders`
+    }],
+    createdAt: new Date().toISOString()
+  };
+  
+  appState.truckloads.push(newTruck);
+  
+  // Update orders with Load ID
+  appState.orders = appState.orders.map(o => {
+    if (selectedPOs.has(o.PO)) {
+      const current = (o["Load ID"] || "").split(",").map(x => x.trim()).filter(Boolean);
+      if (!current.includes(newTruck.loadId)) current.push(newTruck.loadId);
+      return { ...o, "Load ID": current.join(", ") };
+    }
+    return o;
   });
+  
+  selectedPOs.clear();
+  $("modal-overlay").classList.add("hidden");
+  logChange("Truckload Created", { loadId: newTruck.loadId });
+  renderAll();
+  checkAlerts();
+}
 
-  const blocks = appState.settings.blocks.length
-    ? appState.settings.blocks.map((b) => b.window)
-    : ["(unspecified)"];
+/* ========= AUTO-ROUTER ========= */
+function runAutoRouter() {
+  const ordersToRoute = selectedPOs.size > 0
+    ? appState.orders.filter(o => selectedPOs.has(o.PO))
+    : appState.orders.filter(o => !o["Load ID"]);
+  
+  if (ordersToRoute.length === 0) {
+    alert("No orders to route");
+    return;
+  }
+  
+  autoProposals = buildAutoProposals(ordersToRoute);
+  renderAutoRouteModal();
+}
 
+function buildAutoProposals(ordersToRoute) {
   const proposals = [];
-  let nextLoadNum = appState.truckloads.length + 1;
-
-  const today = parseYMD(todayYMD());
+  const today = new Date(todayYMD());
   const plus2 = addDays(today, 2);
-
-  // Phase 0 — peel off SPS (UPS / FedEx Ground etc.)
-  const sps = [];
-  const remaining = [];
-
-  sorted.forEach((r) => {
-    const shipper = (r["Shipper"] || "").trim();
-    const startD = parseYMD(r["Start Date"]);
-    const isSPSTruck = isSPSCarrier(shipper);
-
-    if (isSPSTruck && startD && startD <= plus2) {
-      sps.push(r);
-    } else {
-      remaining.push(r);
-    }
+  
+  // Separate SPS
+  const spsOrders = ordersToRoute.filter(o => o.__isSPS && parseYMD(o["Start Date"]) <= plus2);
+  const regularOrders = ordersToRoute.filter(o => !o.__isSPS || parseYMD(o["Start Date"]) > plus2);
+  
+  // Build SPS trucks
+  const spsByCarrier = new Map();
+  spsOrders.forEach(o => {
+    const key = `${o.Carrier}|${o.__recommendedShip}`;
+    if (!spsByCarrier.has(key)) spsByCarrier.set(key, []);
+    spsByCarrier.get(key).push(o);
   });
-
-  // SPS grouped by carrier + effective date
-  const spsBuckets = new Map(); // key: CARRIER|YYYY-MM-DD
-
-  sps.forEach((r) => {
-    const shipper = (r["Shipper"] || "").trim().toUpperCase();
-    const startD = parseYMD(r["Start Date"]);
-    const recD = parseYMD(r.__recommendedShip);
-    let eff = startD || recD || today;
-    if (startD && recD && recD < eff) eff = recD;
-    const dateStr = ymd(eff);
-    const key = shipper + "|" + dateStr;
-    if (!spsBuckets.has(key)) spsBuckets.set(key, []);
-    spsBuckets.get(key).push(r);
-  });
-
-  for (const [key, list] of spsBuckets) {
-    const [shipper, origDate] = key.split("|");
-    let date = origDate;
-    let idx = 0;
-    let seq = 1;
-
-    while (idx < list.length) {
-      let windowPick = null;
-
-      for (const w of blocks) {
-        if (
-          getSlotUsage(date, w, "SPS") <
-          getSlotLimit(w, "SPS")
-        ) {
-          windowPick = w;
-          break;
-        }
-      }
-
-      if (!windowPick) {
-        let d = new Date(date);
-        let tries = 0;
-        while (!windowPick && tries < 7) {
-          d.setDate(d.getDate() + 1);
-          const tryDate = ymd(d);
-          for (const w of blocks) {
-            if (
-              getSlotUsage(tryDate, w, "SPS") <
-              getSlotLimit(w, "SPS")
-            ) {
-              windowPick = w;
-              date = tryDate;
-              break;
-            }
-          }
-          tries++;
-        }
-        if (!windowPick) windowPick = blocks[0];
-      }
-
-      const pack = [];
-      let u = 0;
-      let c = 0;
-
-      while (idx < list.length) {
-        const r = list[idx];
-        pack.push(r);
-        u += r.__units || 0;
-        c += r.__cartons || 0;
-        idx++;
-      }
-
-      const fill = 0; // SPS no meaningful capacity
-
-      proposals.push({
-        id: `AUTO-SPS-${shipper}-${date}-${seq++}`,
-        type: "sps",
-        loadTypeHint: "SPS",
-        parcelCarrier: shipper,
-        customer: "Multiple Customers",
-        date,
-        window: windowPick,
-        rows: pack,
-        units: u,
-        cartons: c,
-        fill: fill
-      });
-    }
-  }
-
-  // Phase 1 — separate remaining by center vs direct store
-  const direct = remaining.filter((r) => !(r["Center"] || "").trim());
-  const centers = remaining.filter((r) => (r["Center"] || "").trim());
-
-  // Phase 2 — consolidation-center groups
-  const byCenter = new Map();
-  centers.forEach((r) => {
-    const key =
-      (r["Center"] || "").trim() +
-      "|" +
-      (r["Cust Name"] || "").trim() +
-      "|" +
-      (r["Shipper"] || "").trim();
-    if (!byCenter.has(key)) byCenter.set(key, []);
-    byCenter.get(key).push(r);
-  });
-
-  for (const [key, list] of byCenter) {
-    const [center, cust, carrier] = key.split("|");
-    let idx = 0;
-
-    while (idx < list.length) {
-      let date = list[idx].__recommendedShip;
-      let windowPick = null;
-
-      for (const w of blocks) {
-        if (
-          getSlotUsage(date, w, "Truckload") <
-          getSlotLimit(w, "Truckload")
-        ) {
-          windowPick = w;
-          break;
-        }
-      }
-
-      if (!windowPick) {
-        let d = new Date(date);
-        let tries = 0;
-        while (!windowPick && tries < 7) {
-          d.setDate(d.getDate() + 1);
-          const tryDate = ymd(d);
-          for (const w of blocks) {
-            if (
-              getSlotUsage(tryDate, w, "Truckload") <
-              getSlotLimit(w, "Truckload")
-            ) {
-              windowPick = w;
-              date = tryDate;
-              break;
-            }
-          }
-          tries++;
-        }
-        if (!windowPick) windowPick = blocks[0];
-      }
-
-      const pack = [];
-      let u = 0;
-      let c = 0;
-
-      while (idx < list.length) {
-        const r = list[idx];
-        const fits =
-          u + (r.__units || 0) <= MAX_UNITS_PER_TRUCK &&
-          c + (r.__cartons || 0) <= MAX_CARTS_PER_TRUCK;
-        if (!fits && pack.length > 0) break;
-        pack.push(r);
-        u += r.__units || 0;
-        c += r.__cartons || 0;
-        idx++;
-        if (u >= MAX_UNITS_PER_TRUCK || c >= MAX_CARTS_PER_TRUCK) break;
-      }
-
-      const fill = Math.min(
-        (c / MAX_CARTS_PER_TRUCK) * 100,
-        (u / MAX_UNITS_PER_TRUCK) * 100
-      );
-
-      proposals.push({
-        id: `AUTO-${center}-${nextLoadNum++}`,
-        type: "center",
-        loadTypeHint: "Truckload",
-        center,
-        customer: cust,
-        carrier,
-        date,
-        window: windowPick,
-        rows: pack,
-        units: u,
-        cartons: c,
-        fill: Math.round(fill)
-      });
-    }
-  }
-
-  // Phase 3 — direct-store orders
-  direct.forEach((r) => {
-    const isAmazon = String(r["Cust Name"] || "")
-      .toLowerCase()
-      .includes("amazon");
-    const po = r["PO Num"] || crypto.randomUUID().slice(0, 6);
-    const id = `AUTO-STORE-${po}`;
-    const date = r.__recommendedShip;
-
-    let win = null;
-    for (const w of blocks) {
-      if (
-        getSlotUsage(date, w, "Truckload") <
-        getSlotLimit(w, "Truckload")
-      ) {
-        win = w;
-        break;
-      }
-    }
-    if (!win) win = blocks[0];
-
+  
+  for (const [key, orders] of spsByCarrier) {
+    const [carrier, date] = key.split('|');
     proposals.push({
-      id,
-      type: "store",
-      loadTypeHint: "Truckload",
-      store: r["Store"] || "",
-      carrier: r["Shipper"] || "",
-      customer: r["Cust Name"] || "",
+      id: `SPS-${Date.now()}-${proposals.length}`,
+      type: "SPS",
+      loadType: "Small Parcel",
+      carrier,
+      customer: "Multiple",
       date,
-      window: win,
-      rows: [r],
-      units: r.__units || 0,
-      cartons: r.__cartons || 0,
-      fill: Math.round(
-        ((r.__cartons || 0) / MAX_CARTS_PER_TRUCK) * 100
-      ),
-      amazon: isAmazon
+      window: TIME_BLOCKS[0].window,
+      orders,
+      units: sumNumber(orders, "Units"),
+      cartons: sumNumber(orders, "Cartons"),
+      fill: 0
     });
+  }
+  
+  // Build regular trucks by customer/carrier
+  const byGroup = new Map();
+  regularOrders.forEach(o => {
+    const key = `${o.Customer}|${o.Carrier}`;
+    if (!byGroup.has(key)) byGroup.set(key, []);
+    byGroup.get(key).push(o);
   });
-
+  
+  for (const [key, orders] of byGroup) {
+    const [customer, carrier] = key.split('|');
+    let remaining = [...orders];
+    
+    while (remaining.length > 0) {
+      const chunk = [];
+      let units = 0;
+      let cartons = 0;
+      
+      for (const o of remaining) {
+        if (units + o.__units <= MAX_UNITS_PER_TRUCK && cartons + o.__cartons <= MAX_CARTS_PER_TRUCK) {
+          chunk.push(o);
+          units += o.__units;
+          cartons += o.__cartons;
+        }
+      }
+      
+      if (chunk.length === 0) chunk.push(remaining[0]);
+      remaining = remaining.filter(o => !chunk.includes(o));
+      
+      const date = earliestDate(chunk.map(o => o.__recommendedShip));
+      const fill = Math.round(Math.min(units / MAX_UNITS_PER_TRUCK, cartons / MAX_CARTS_PER_TRUCK) * 100);
+      
+      proposals.push({
+        id: `LOAD-${Date.now()}-${proposals.length}`,
+        type: "Truckload",
+        loadType: fill > 70 ? "Truckload" : "LTL",
+        carrier,
+        customer,
+        date,
+        window: TIME_BLOCKS[1].window,
+        orders: chunk,
+        units,
+        cartons,
+        fill
+      });
+    }
+  }
+  
   return proposals;
 }
 
-/* --- auto-modal editable UI --- */
-function renderAutoModal(proposals) {
-  const tb = document.querySelector("#auto-table tbody");
-  tb.innerHTML = proposals
-    .map((p) => {
-      let notes = "";
-      if (p.type === "center") notes = "Master BOL may be needed";
-      else if (p.type === "store" && p.amazon) notes = "Amazon – single store";
-      else if (p.type === "sps")
-        notes = `SPS Parcel ${p.parcelCarrier}`;
-      return `
-        <tr class="${p.type === "center" ? "row-warn" : ""}">
-          <td><input type="checkbox" class="auto-pick" data-id="${
-            p.id
-          }" ${p.fill >= 60 || p.type === "sps" ? "checked" : ""}></td>
-          <td>${p.id}</td>
-          <td>
-            <input type="date" class="auto-date" data-id="${p.id}" value="${p.date || ""}">
-          </td>
-          <td>
-            <input type="text" class="auto-window" data-id="${p.id}" value="${p.window || ""}">
-          </td>
-          <td>
-            <input type="text" class="auto-carrier" data-id="${p.id}" value="${(p.carrier || p.parcelCarrier || "")}">
-          </td>
-          <td>${p.rows.length}</td>
-          <td>${p.units.toLocaleString()}</td>
-          <td>${p.cartons.toLocaleString()}</td>
-          <td>${p.fill}%</td>
-          <td>
-            <select class="auto-type" data-id="${p.id}">
-              <option value="Truckload" ${
-                p.loadTypeHint === "Truckload" ? "selected" : ""
-              }>Truckload</option>
-              <option value="LTL" ${
-                p.loadTypeHint === "LTL" ? "selected" : ""
-              }>LTL</option>
-              <option value="Floorload" ${
-                p.loadTypeHint === "Floorload" ? "selected" : ""
-              }>Floorload</option>
-              <option value="SPS" ${
-                p.loadTypeHint === "SPS" ? "selected" : ""
-              }>SPS</option>
-              <option value="Small Parcel" ${
-                p.loadTypeHint === "Small Parcel" ? "selected" : ""
-              }>Small Parcel</option>
-            </select>
-            ${notes ? `<div class="muted" style="font-size:11px;">${notes}</div>` : ""}
-          </td>
-        </tr>`;
-    })
-    .join("");
-
-  const uTot = proposals.reduce((s, p) => s + p.units, 0);
-  const cTot = proposals.reduce((s, p) => s + p.cartons, 0);
-  $("auto-summary").textContent = `Proposed loads: ${
-    proposals.length
-  } • Total Units ${uTot.toLocaleString()} • Total Cartons ${cTot.toLocaleString()}`;
-
+function renderAutoRouteModal() {
+  const tb = $("auto-body");
+  tb.innerHTML = "";
+  
+  autoProposals.forEach(p => {
+    const fillClass = p.fill >= 80 ? "fill-high" : p.fill >= 50 ? "fill-medium" : "fill-low";
+    
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><input type="checkbox" class="auto-check" data-id="${p.id}" checked></td>
+      <td>${p.id}</td>
+      <td>${p.loadType}</td>
+      <td>${p.customer}</td>
+      <td>${p.carrier}</td>
+      <td><input type="date" class="auto-date input-slim" data-id="${p.id}" value="${p.date}"></td>
+      <td>
+        <select class="auto-window input-slim" data-id="${p.id}">
+          ${TIME_BLOCKS.map(b => `<option value="${b.window}" ${b.window === p.window ? "selected" : ""}>${b.label}</option>`).join("")}
+        </select>
+      </td>
+      <td>${p.orders.length}</td>
+      <td>${p.units.toLocaleString()}</td>
+      <td>${p.cartons.toLocaleString()}</td>
+      <td>
+        <div class="fill-bar">
+          <div class="fill-track"><div class="fill-value ${fillClass}" style="width:${p.fill}%"></div></div>
+          <span>${p.fill}%</span>
+        </div>
+      </td>
+    `;
+    tb.appendChild(tr);
+  });
+  
+  $("auto-summary").textContent = `${autoProposals.length} proposed loads • ${autoProposals.reduce((s, p) => s + p.units, 0).toLocaleString()} units • ${autoProposals.reduce((s, p) => s + p.cartons, 0).toLocaleString()} cartons`;
+  
   $("auto-overlay").classList.remove("hidden");
-
-  $("auto-confirm-all").onclick = () => {
-    applyAutoEdits(proposals);
-    confirmAutoProposals(proposals);
-  };
-
-  $("auto-confirm-selected").onclick = () => {
-    applyAutoEdits(proposals);
-    const ids = [
-      ...document.querySelectorAll(".auto-pick:checked")
-    ].map((x) => x.dataset.id);
-    confirmAutoProposals(
-      proposals.filter((p) => ids.includes(p.id))
-    );
-  };
 }
 
-/* read edits from modal back into proposals */
-function applyAutoEdits(proposals) {
-  proposals.forEach((p) => {
-    const dateInput = document.querySelector(
-      `.auto-date[data-id="${p.id}"]`
-    );
-    const winInput = document.querySelector(
-      `.auto-window[data-id="${p.id}"]`
-    );
-    const carInput = document.querySelector(
-      `.auto-carrier[data-id="${p.id}"]`
-    );
-    const typeSel = document.querySelector(
-      `.auto-type[data-id="${p.id}"]`
-    );
+function confirmAutoRoute() {
+  const selectedIds = new Set(
+    [...document.querySelectorAll(".auto-check:checked")].map(c => c.dataset.id)
+  );
+  
+  const toCreate = autoProposals.filter(p => selectedIds.has(p.id));
+  
+  toCreate.forEach(p => {
+    // Get edited values
+    const dateInput = document.querySelector(`.auto-date[data-id="${p.id}"]`);
+    const windowInput = document.querySelector(`.auto-window[data-id="${p.id}"]`);
+    
+    const newTruck = {
+      loadId: p.id,
+      loadType: p.loadType,
+      customer: p.customer,
+      carrier: p.carrier,
+      pickupDate: dateInput?.value || p.date,
+      pickupWindow: windowInput?.value || p.window,
+      bol: mostCommon(p.orders.map(o => o.BOL)),
+      masterBol: mostCommon(p.orders.map(o => o["Master BOL"])),
+      cartons: p.cartons,
+      units: p.units,
+      weight: sumNumber(p.orders, "Weight"),
+      stagedLocationSL: "",
+      stagedLocationDD: "",
+      status: "Not Started",
+      departed: false,
+      orders: p.orders.map(o => o.PO),
+      stagingLog: [{
+        ts: new Date().toISOString(),
+        action: "Created by Auto-Router",
+        user: appState.session.email,
+        note: `${p.orders.length} orders, ${p.fill}% fill`
+      }],
+      createdAt: new Date().toISOString()
+    };
+    
+    appState.truckloads.push(newTruck);
+    
+    // Update orders
+    appState.orders = appState.orders.map(o => {
+      if (p.orders.find(po => po.PO === o.PO)) {
+        const current = (o["Load ID"] || "").split(",").map(x => x.trim()).filter(Boolean);
+        if (!current.includes(newTruck.loadId)) current.push(newTruck.loadId);
+        return { ...o, "Load ID": current.join(", ") };
+      }
+      return o;
+    });
+  });
+  
+  $("auto-overlay").classList.add("hidden");
+  selectedPOs.clear();
+  logChange("Auto-Route Completed", { count: toCreate.length });
+  renderAll();
+  checkAlerts();
+}
 
-    if (dateInput) p.date = dateInput.value || p.date;
-    if (winInput) p.window = winInput.value || p.window;
-    if (carInput) p.carrier = carInput.value || p.carrier;
-    if (typeSel) p.loadTypeHint = typeSel.value || p.loadTypeHint;
+/* ========= DISCREPANCIES ========= */
+function renderDiscrepancies() {
+  const tb = $("disc-body");
+  if (!tb) return;
+  
+  const discrepancies = detectDiscrepancies();
+  tb.innerHTML = "";
+  
+  if (discrepancies.length === 0) {
+    tb.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:40px;color:#059669;">✓ No discrepancies detected</td></tr>`;
+    return;
+  }
+  
+  discrepancies.forEach(d => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><span class="priority-badge priority-high">${d.type}</span></td>
+      <td>${d.po}</td>
+      <td>${d.field}</td>
+      <td>${d.csvValue}</td>
+      <td>${d.dashValue}</td>
+      <td>${d.loadIds}</td>
+    `;
+    tb.appendChild(tr);
   });
 }
 
-/* --- confirm proposals into real loads --- */
-function confirmAutoProposals(proposals) {
-  if (!proposals.length) {
-    $("auto-overlay").classList.add("hidden");
-    return;
-  }
-
-  for (const p of proposals) {
-    const typeHint =
-      p.loadTypeHint ||
-      (p.type === "sps"
-        ? "SPS"
-        : "Truckload");
-
-    const base = buildLoadFromRows({
-      loadId: p.id,
-      rows: p.rows,
-      loadTypeHint: typeHint
+function detectDiscrepancies() {
+  const discrepancies = [];
+  
+  // Duplicate POs
+  const poMap = new Map();
+  appState.orders.forEach(o => {
+    if (o.PO) {
+      if (poMap.has(o.PO)) {
+        discrepancies.push({
+          type: "Duplicate",
+          po: o.PO,
+          field: "PO",
+          csvValue: o.PO,
+          dashValue: "Multiple",
+          loadIds: o["Load ID"] || ""
+        });
+      }
+      poMap.set(o.PO, o);
+    }
+  });
+  
+  // Orders in trucks but not in orders
+  appState.truckloads.forEach(truck => {
+    (truck.orders || []).forEach(po => {
+      if (!appState.orders.find(o => o.PO === po)) {
+        discrepancies.push({
+          type: "Missing",
+          po,
+          field: "PO",
+          csvValue: "Not in CSV",
+          dashValue: "In truck",
+          loadIds: truck.loadId
+        });
+      }
     });
-
-    base.autoGenerated = false;
-    base.pickupDate = p.date;
-    base.pickupWindow = p.window;
-    base.carrier = p.carrier || p.parcelCarrier || base.carrier;
-    base.customer = p.customer || base.customer;
-
-    if (p.type === "center") {
-      base.status = "⚠ Master BOL Required";
-    }
-    if (p.type === "sps") {
-      base.status = "SPS – Ready";
-      base.customer = "Multiple Customers";
-    }
-
-    appState.truckloads.push(base);
-    attachOrdersToLoad(p.rows, p.id);
-    logStagingEvent(base, "Auto-route created load", { note: "Auto-route" });
-  }
-
-  $("auto-overlay").classList.add("hidden");
-  saveState();
-  renderAll();
+  });
+  
+  return discrepancies;
 }
 
-/* ========= DOCK RENDER / EDIT ========= */
+/* ========= DOCK TAB ========= */
 function renderDock() {
   const tb = $("dock-body");
   if (!tb) return;
+  
   const q = ($("dock-search")?.value || "").toLowerCase();
   tb.innerHTML = "";
-
-  const loads = [...appState.truckloads].sort((a, b) =>
-    (a.pickupDate || "") < (b.pickupDate || "") ? -1 : 1
-  );
-
-  loads
-    .filter((t) => {
+  
+  const loads = appState.truckloads
+    .filter(t => !t.departed)
+    .filter(t => {
       if (!q) return true;
-      return [
-        t.loadId,
-        t.customer,
-        t.carrier,
-        t.loadType,
-        t.pickupDate,
-        t.pickupWindow,
-        t.stagedLocation,
-        (t.assignedTo || []).join(", "),
-        t.status
-      ]
-        .some((v) =>
-          String(v || "").toLowerCase().includes(q)
-        );
-    })
-    .forEach((t) => {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${t.loadId}</td>
-        <td>${t.customer || ""}</td>
-        <td>${t.carrier || ""}</td>
-        <td>${t.loadType || ""}</td>
-        <td>${t.pickupDate || ""}</td>
-        <td>${t.pickupWindow || ""}</td>
-        <td>${t.cartons || 0}</td>
-        <td>${t.pallets || 0}</td>
-        <td><input class="cell-input" data-bind="actualPallets" data-id="${
-          t.loadId
-        }" type="number" min="0" value="${t.actualPallets || 0}"></td>
-        <td><input class="cell-input" data-bind="stagedLocation" data-id="${
-          t.loadId
-        }" value="${t.stagedLocation || ""}"></td>
-        <td>
-          <input class="cell-input" data-bind="assignedTo" data-id="${
-            t.loadId
-          }" placeholder="Type names... (comma separated)" value="${
-        (t.assignedTo || []).join(", ")
-      }">
-        </td>
-        <td>${t.status || ""}</td>
-        <td>
-          <button class="btn tiny" data-assign="${t.loadId}">Start</button>
-          <button class="btn tiny secondary" data-stage="${t.loadId}">Fully Staged</button>
-          <button class="btn tiny secondary" data-dock-view="${t.loadId}">History</button>
-        </td>
-      `;
-      tb.appendChild(tr);
-    });
-
-  tb.querySelectorAll(".cell-input").forEach((inp) => {
-    inp.onchange = () => {
-      const t = appState.truckloads.find(
-        (x) => x.loadId === inp.dataset.id
+      return [t.loadId, t.customer, t.carrier, t.status].some(v => 
+        String(v || "").toLowerCase().includes(q)
       );
-      if (!t) return;
-      const key = inp.dataset.bind;
-      if (key === "assignedTo") {
-        t[key] = inp.value
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean);
-      } else if (key === "actualPallets") {
-        t[key] = +inp.value || 0;
-      } else {
-        t[key] = inp.value;
-      }
-      logStagingEvent(t, "Dock data updated", { note: key });
-      saveState();
-    };
-  });
-
-  tb.querySelectorAll("[data-assign]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        const t = appState.truckloads.find(
-          (x) => x.loadId === b.dataset.assign
-        );
-        if (!t) return;
-        t.status = "Being staged";
-        logStagingEvent(t, "Staging started");
-        saveState();
-        renderAll();
-      })
-  );
-
-  tb.querySelectorAll("[data-stage]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        const t = appState.truckloads.find(
-          (x) => x.loadId === b.dataset.stage
-        );
-        if (!t) return;
-        t.status = "Fully staged";
-        logStagingEvent(t, "Marked fully staged");
-        saveState();
-        renderAll();
-      })
-  );
-
-  tb.querySelectorAll("[data-dock-view]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        const t = appState.truckloads.find(
-          (x) => x.loadId === b.dataset.dockView
-        );
-        if (!t) return;
-        showDockStagingModal(t);
-      })
-  );
-}
-
-if ($("dock-search"))
-  $("dock-search").oninput = () => renderDock();
-
-if ($("dock-clear"))
-  $("dock-clear").onclick = () => {
-    $("dock-search").value = "";
-    renderDock();
-  };
-
-/* ========= DOCK STAGING MODAL ========= */
-function showDockStagingModal(load) {
-  $("dock-modal-id").textContent = load.loadId;
-  $("dock-modal-assigned").textContent = (load.assignedTo || []).join(", ") || "—";
-  $("dock-modal-location").textContent = load.stagedLocation || "—";
-  $("dock-modal-type").textContent = load.loadType || "—";
-  $("dock-modal-carrier").textContent = load.carrier || "—";
-  $("dock-modal-date").textContent = load.pickupDate || "—";
-
-  const body = $("dock-modal-history-body");
-  body.innerHTML = "";
-
-  const history = (load.stagingLog || []).slice().sort(
-    (a, b) => new Date(a.ts) - new Date(b.ts)
-  );
-
-  history.forEach((e) => {
-    const tr = document.createElement("tr");
-    const when = new Date(e.ts).toLocaleString();
-    tr.innerHTML = `
-      <td>${when}</td>
-      <td>${e.action || ""}</td>
-      <td>${e.assignedTo || ""}</td>
-      <td>${e.pallets ?? ""}</td>
-      <td>${e.note || ""}</td>
-    `;
-    body.appendChild(tr);
-  });
-
-  $("dock-modal-overlay").classList.remove("hidden");
-}
-
-if ($("dock-modal-close"))
-  $("dock-modal-close").onclick = () =>
-    $("dock-modal-overlay").classList.add("hidden");
-
-/* ========= TODAY'S PICKUPS ========= */
-function renderTodays() {
-  const tb = $("today-body");
-  if (!tb) return;
-  tb.innerHTML = "";
-
-  const today = todayYMD();
-  const loads = appState.truckloads.filter(
-    (t) => t.pickupDate && sameDate(t.pickupDate, today)
-  );
-
-  loads
-    .sort((a, b) => {
-      const p =
-        a.status === "At door"
-          ? -1
-          : a.status === "Departed"
-          ? 1
-          : 0;
-      const q =
-        b.status === "At door"
-          ? -1
-          : b.status === "Departed"
-          ? 1
-          : 0;
-      return p - q;
     })
-    .forEach((t) => {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${t.loadId}</td>
-        <td>${t.customer || ""}</td>
-        <td>${t.carrier || ""}</td>
-        <td>${t.loadType || ""}</td>
-        <td>${t.pickupWindow || ""}</td>
-        <td>${t.cartons || 0}</td>
-        <td><input class="cell-input" data-bind="loadedBy" data-id="${
-          t.loadId
-        }" placeholder="Comma separated" value="${
-        (t.loadedBy || []).join(", ")
-      }"></td>
-        <td>${t.status || ""}</td>
-        <td><button class="btn tiny" data-arrived="${t.loadId}">Arrived</button></td>
-        <td><button class="btn tiny secondary" data-departed="${t.loadId}">Departed</button></td>
-      `;
-      tb.appendChild(tr);
-    });
-
-  tb.querySelectorAll("[data-arrived]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        const t = appState.truckloads.find(
-          (x) => x.loadId === b.dataset.arrived
-        );
-        if (!t) return;
-        t.status = "At door";
-        logStagingEvent(t, "Truck arrived at door");
-        saveState();
-        renderTodays();
-        renderTruckloads();
-      })
-  );
-
-  tb.querySelectorAll("[data-departed]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        const t = appState.truckloads.find(
-          (x) => x.loadId === b.dataset.departed
-        );
-        if (!t) return;
-        t.status = "Departed";
-        t.departed = true;
-        logStagingEvent(t, "Truck departed");
-        if (
-          !appState.history.find((h) => h.loadId === t.loadId)
-        ) {
-          appState.history.push({
-            loadId: t.loadId,
-            customer: t.customer,
-            carrier: t.carrier,
-            pickupDate: t.pickupDate,
-            pickupWindow: t.pickupWindow,
-            status: "Departed"
-          });
-        }
-        saveState();
-        renderTodays();
-        renderHistory();
-        renderTruckloads();
-      })
-  );
-
-  tb.querySelectorAll(".cell-input[data-bind='loadedBy']").forEach(
-    (inp) =>
-      (inp.onchange = () => {
-        const t = appState.truckloads.find(
-          (x) => x.loadId === inp.dataset.id
-        );
-        if (!t) return;
-        t.loadedBy = inp.value
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean);
-        logStagingEvent(t, "Loaded by updated");
-        saveState();
-      })
-  );
-}
-
-/* ========= TRUCKLOADS + DRILL-DOWN ========= */
-function renderTruckloads() {
-  const tb = $("truckloads-body");
-  if (!tb) return;
-  tb.innerHTML = "";
-
-  appState.truckloads.forEach((t) => {
+    .sort((a, b) => (a.pickupDate || "").localeCompare(b.pickupDate || ""));
+  
+  loads.forEach(t => {
     const tr = document.createElement("tr");
-    tr.className = "tl-row";
-    tr.dataset.id = t.loadId;
-
-    const needsMaster = String(t.status || "").includes("Master BOL");
-    const isSPS = t.loadType === "SPS";
-    const masterBadge = needsMaster
-      ? `<span class="badge badge-warn" title="Master BOL Required">⚠</span>`
-      : "";
-    const spsBadge = isSPS
-      ? `<span class="badge badge-info" title="SPS Parcel Load">SP</span>`
-      : "";
-    const badge = masterBadge || spsBadge;
-
+    
+    const statusClass = t.status === "Fully Staged" ? "status-staged" :
+                        t.status === "In Progress" ? "status-progress" : "";
+    
     tr.innerHTML = `
-      <td>${t.loadId} ${badge}</td>
+      <td>${t.loadId}</td>
       <td>${t.customer || ""}</td>
       <td>${t.carrier || ""}</td>
       <td>${t.loadType || ""}</td>
       <td>${t.pickupDate || ""}</td>
       <td>${t.pickupWindow || ""}</td>
       <td>${t.cartons || 0}</td>
-      <td>${t.status || ""}</td>
+      <td>
+        <select class="input-slim dock-sl" data-id="${t.loadId}">
+          <option value="">-</option>
+          ${SL_LANES.slice(0, 50).map(l => `<option value="${l}" ${t.stagedLocationSL === l ? "selected" : ""}>${l}</option>`).join("")}
+        </select>
+      </td>
+      <td>
+        <select class="input-slim dock-dd" data-id="${t.loadId}">
+          <option value="">-</option>
+          ${DD_DOORS.map(d => `<option value="${d}" ${t.stagedLocationDD === d ? "selected" : ""}>${d}</option>`).join("")}
+        </select>
+      </td>
+      <td><span class="status-badge ${statusClass}">${t.status}</span></td>
+      <td>
+        <button class="btn tiny" onclick="setDockStatus('${t.loadId}', 'In Progress')">Start</button>
+        <button class="btn tiny" onclick="setDockStatus('${t.loadId}', 'Fully Staged')">Staged</button>
+        <button class="btn tiny secondary" onclick="showDockHistory('${t.loadId}')">🕐</button>
+      </td>
     `;
     tb.appendChild(tr);
   });
+  
+  // Attach change handlers
+  document.querySelectorAll(".dock-sl").forEach(sel => {
+    sel.onchange = () => updateDockLocation(sel.dataset.id, "stagedLocationSL", sel.value);
+  });
+  document.querySelectorAll(".dock-dd").forEach(sel => {
+    sel.onchange = () => updateDockLocation(sel.dataset.id, "stagedLocationDD", sel.value);
+  });
+}
 
-  document.querySelectorAll(".tl-row").forEach((row) => {
-    row.onclick = () => {
-      const id = row.dataset.id;
-      const load = appState.truckloads.find((t) => t.loadId === id);
-      if (!load) return;
+function updateDockLocation(loadId, field, value) {
+  const truck = appState.truckloads.find(t => t.loadId === loadId);
+  if (truck) {
+    truck[field] = value;
+    truck.stagingLog.push({
+      ts: new Date().toISOString(),
+      action: `${field} updated`,
+      user: appState.session.email,
+      note: value
+    });
+    saveState();
+    checkAlerts();
+  }
+}
 
-      const body = $("tl-detail-body");
-      body.innerHTML = load.masterGroups
-        .map(
-          (m) =>
-            `<div class="mb">
-              <strong>Master BOL:</strong> ${
-                m.masterBol || "(none)"
-              }
-              <ul class="ul-compact">
-                ${m.bols
-                  .map(
-                    (bl) =>
-                      `<li><strong>${
-                        bl.bol || "(no BOL)"
-                      }:</strong> ${bl.pos
-                        .map((p) => p.po)
-                        .join(", ")}</li>`
-                  )
-                  .join("")}
-              </ul>
-            </div>`
-        )
-        .join("");
+function setDockStatus(loadId, status) {
+  const truck = appState.truckloads.find(t => t.loadId === loadId);
+  if (truck) {
+    truck.status = status;
+    truck.stagingLog.push({
+      ts: new Date().toISOString(),
+      action: `Status: ${status}`,
+      user: appState.session.email,
+      note: ""
+    });
+    saveState();
+    renderDock();
+    logChange("Dock Status Updated", { loadId, status });
+  }
+}
 
-      $("tl-detail-title").textContent = `${
-        load.loadId
-      } — ${load.customer || ""}`;
+function showDockHistory(loadId) {
+  const truck = appState.truckloads.find(t => t.loadId === loadId);
+  if (!truck) return;
+  
+  $("dock-history-title").textContent = `History: ${loadId}`;
+  $("dock-history-info").innerHTML = `
+    <div><strong>Customer:</strong> ${truck.customer}</div>
+    <div><strong>Carrier:</strong> ${truck.carrier}</div>
+    <div><strong>Pickup:</strong> ${truck.pickupDate}</div>
+    <div><strong>Status:</strong> ${truck.status}</div>
+  `;
+  
+  const tb = $("dock-history-body");
+  tb.innerHTML = "";
+  
+  (truck.stagingLog || []).forEach(log => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${new Date(log.ts).toLocaleString()}</td>
+      <td>${log.action}</td>
+      <td>${log.user}</td>
+      <td>${log.note}</td>
+    `;
+    tb.appendChild(tr);
+  });
+  
+  $("dock-history-overlay").classList.remove("hidden");
+}
 
-      $("ed-load-id").value = load.loadId || "";
-      $("ed-pickup-date").value = load.pickupDate || "";
-      $("ed-pickup-window").value = load.pickupWindow || "";
-      $("ed-carrier").value = load.carrier || "";
-      $("ed-customer").value = load.customer || "";
+/* ========= TODAY'S PICKUPS ========= */
+function renderTodays() {
+  const tb = $("today-body");
+  if (!tb) return;
+  
+  const today = todayYMD();
+  const loads = appState.truckloads
+    .filter(t => sameDate(t.pickupDate, today))
+    .sort((a, b) => {
+      const order = { 'At Door': 1, 'Fully Staged': 2, 'In Progress': 3, 'Not Started': 4, 'Departed': 5 };
+      return (order[a.status] || 99) - (order[b.status] || 99);
+    });
+  
+  tb.innerHTML = "";
+  
+  if (loads.length === 0) {
+    tb.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:40px;">No pickups scheduled for today</td></tr>`;
+    return;
+  }
+  
+  loads.forEach(t => {
+    const tr = document.createElement("tr");
+    
+    const statusClass = t.status === "Departed" ? "status-departed" :
+                        t.status === "At Door" ? "status-door" :
+                        t.status === "Fully Staged" ? "status-staged" : "";
+    
+    tr.innerHTML = `
+      <td>${t.loadId}</td>
+      <td>${t.customer || ""}</td>
+      <td>${t.carrier || ""}</td>
+      <td>${t.loadType || ""}</td>
+      <td>${t.bol || ""}</td>
+      <td>${t.masterBol || ""}</td>
+      <td>${t.pickupWindow || ""}</td>
+      <td>${t.cartons || 0}</td>
+      <td><span class="status-badge ${statusClass}">${t.status}</span></td>
+      <td>
+        <button class="btn tiny" onclick="markArrived('${t.loadId}')" ${t.status === "Departed" ? "disabled" : ""}>Arrived</button>
+        <button class="btn tiny" onclick="markDeparted('${t.loadId}')" ${t.status === "Departed" ? "disabled" : ""}>Departed</button>
+      </td>
+    `;
+    tb.appendChild(tr);
+  });
+}
 
-      $("tl-detail-overlay").classList.remove("hidden");
+function markArrived(loadId) {
+  const truck = appState.truckloads.find(t => t.loadId === loadId);
+  if (truck) {
+    truck.status = "At Door";
+    truck.arrivedAt = new Date().toISOString();
+    truck.stagingLog.push({
+      ts: new Date().toISOString(),
+      action: "Arrived at door",
+      user: appState.session.email,
+      note: ""
+    });
+    saveState();
+    renderTodays();
+    logChange("Truck Arrived", { loadId });
+  }
+}
 
-      $("tl-detail-close").onclick = () =>
-        $("tl-detail-overlay").classList.add("hidden");
+function markDeparted(loadId) {
+  const truck = appState.truckloads.find(t => t.loadId === loadId);
+  if (truck) {
+    truck.status = "Departed";
+    truck.departed = true;
+    truck.departedAt = new Date().toISOString();
+    truck.stagingLog.push({
+      ts: new Date().toISOString(),
+      action: "Departed",
+      user: appState.session.email,
+      note: ""
+    });
+    
+    // Add to history
+    if (!appState.history.find(h => h.loadId === loadId)) {
+      appState.history.push({
+        loadId: truck.loadId,
+        customer: truck.customer,
+        carrier: truck.carrier,
+        bol: truck.bol,
+        masterBol: truck.masterBol,
+        pickupDate: truck.pickupDate,
+        pickupWindow: truck.pickupWindow,
+        departedAt: truck.departedAt
+      });
+    }
+    
+    saveState();
+    renderTodays();
+    renderHistory();
+    logChange("Truck Departed", { loadId });
+  }
+}
 
-      $("tl-detail-save").onclick = () => {
-        const oldId = load.loadId;
-        const newId = $("ed-load-id").value.trim() || load.loadId;
-        load.loadId = newId;
-        load.pickupDate = $("ed-pickup-date").value;
-        load.pickupWindow = $("ed-pickup-window").value.trim();
-        load.carrier = $("ed-carrier").value.trim();
-        load.customer = $("ed-customer").value.trim();
-
-        if (oldId !== newId) {
-          appState.orders.forEach((o) => {
-            if (!o["Load ID"]) return;
-            const ids = o["Load ID"]
-              .split(",")
-              .map((x) => x.trim())
-              .filter(Boolean);
-            const replaced = ids.map((x) => (x === oldId ? newId : x));
-            o["Load ID"] = [...new Set(replaced)].join(", ");
-          });
-        }
-
-        saveState();
-        renderAll();
-        $("tl-detail-overlay").classList.add("hidden");
-      };
+/* ========= TRUCKLOADS TAB ========= */
+function renderTruckloads() {
+  const tb = $("truckloads-body");
+  if (!tb) return;
+  
+  const q = ($("truckloads-search")?.value || "").toLowerCase();
+  
+  const loads = appState.truckloads.filter(t => {
+    if (!q) return true;
+    return [t.loadId, t.customer, t.carrier, t.status].some(v => 
+      String(v || "").toLowerCase().includes(q)
+    );
+  });
+  
+  tb.innerHTML = "";
+  
+  loads.forEach(t => {
+    const tr = document.createElement("tr");
+    tr.onclick = () => showTruckDetail(t.loadId);
+    
+    const statusClass = t.status === "Departed" ? "status-departed" :
+                        t.status === "Fully Staged" ? "status-staged" : "";
+    
+    tr.innerHTML = `
+      <td onclick="event.stopPropagation()">
+        <input type="checkbox" class="truck-check" data-id="${t.loadId}" ${selectedTrucks.has(t.loadId) ? "checked" : ""}>
+      </td>
+      <td style="color:#2563eb;font-weight:500;">${t.loadId}</td>
+      <td>${t.customer || ""}</td>
+      <td>${t.carrier || ""}</td>
+      <td>${t.loadType || ""}</td>
+      <td>${t.pickupDate || ""}</td>
+      <td>${t.pickupWindow || ""}</td>
+      <td>${t.cartons || 0}</td>
+      <td><span class="status-badge ${statusClass}">${t.status}</span></td>
+    `;
+    tb.appendChild(tr);
+  });
+  
+  document.querySelectorAll(".truck-check").forEach(chk => {
+    chk.onchange = (e) => {
+      const id = e.target.dataset.id;
+      if (e.target.checked) selectedTrucks.add(id);
+      else selectedTrucks.delete(id);
     };
   });
+}
+
+function showTruckDetail(loadId) {
+  const truck = appState.truckloads.find(t => t.loadId === loadId);
+  if (!truck) return;
+  
+  $("tl-detail-title").textContent = `${truck.loadId} — ${truck.customer || ""}`;
+  
+  // Show orders in truck
+  const truckOrders = appState.orders.filter(o => (truck.orders || []).includes(o.PO));
+  $("tl-detail-body").innerHTML = `
+    <strong>Orders (${truckOrders.length}):</strong>
+    <table style="width:100%;font-size:12px;margin-top:8px;">
+      <tr><th>PO</th><th>Customer</th><th>Units</th><th>Cartons</th><th>BOL</th></tr>
+      ${truckOrders.map(o => `
+        <tr>
+          <td>${o.PO}</td>
+          <td>${o.Customer}</td>
+          <td>${o.Units}</td>
+          <td>${o.Cartons}</td>
+          <td>${o.BOL}</td>
+        </tr>
+      `).join("")}
+    </table>
+  `;
+  
+  // Fill edit fields
+  $("ed-load-id").value = truck.loadId;
+  $("ed-pickup-date").value = truck.pickupDate || "";
+  $("ed-pickup-window").value = truck.pickupWindow || "";
+  $("ed-carrier").value = truck.carrier || "";
+  $("ed-customer").value = truck.customer || "";
+  
+  $("tl-detail-overlay").classList.remove("hidden");
+  
+  // Save handler
+  $("tl-detail-save").onclick = () => {
+    truck.loadId = $("ed-load-id").value.trim();
+    truck.pickupDate = $("ed-pickup-date").value;
+    truck.pickupWindow = $("ed-pickup-window").value;
+    truck.carrier = $("ed-carrier").value.trim();
+    truck.customer = $("ed-customer").value.trim();
+    
+    truck.stagingLog.push({
+      ts: new Date().toISOString(),
+      action: "Edited",
+      user: appState.session.email,
+      note: "Manual edit"
+    });
+    
+    saveState();
+    renderAll();
+    $("tl-detail-overlay").classList.add("hidden");
+    logChange("Truckload Edited", { loadId: truck.loadId });
+  };
+}
+
+/* ========= CALENDAR ========= */
+function renderCalendar() {
+  const grid = $("calendar-grid");
+  if (!grid) return;
+  
+  const view = $("cal-view")?.value || "month";
+  const filter = ($("cal-filter")?.value || "").toLowerCase();
+  
+  let start, days;
+  const dow = (calAnchor.getDay() + 6) % 7;
+  
+  if (view === "wk") {
+    start = addDays(calAnchor, -dow);
+    days = 7;
+  } else if (view === "2w") {
+    start = addDays(calAnchor, -dow);
+    days = 14;
+  } else {
+    const mStart = new Date(calAnchor.getFullYear(), calAnchor.getMonth(), 1);
+    const lead = (mStart.getDay() + 6) % 7;
+    start = addDays(mStart, -lead);
+    days = 42;
+  }
+  
+  $("cal-title").textContent = calAnchor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  
+  grid.innerHTML = "";
+  
+  // Headers
+  ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].forEach(d => {
+    const div = document.createElement("div");
+    div.className = "cal-header";
+    div.textContent = d;
+    grid.appendChild(div);
+  });
+  
+  // Days
+  for (let i = 0; i < days; i++) {
+    const day = addDays(start, i);
+    const dateStr = ymd(day);
+    const isToday = sameDate(day, todayYMD());
+    
+    const cell = document.createElement("div");
+    cell.className = `cal-cell ${isToday ? "today" : ""}`;
+    cell.dataset.date = dateStr;
+    
+    const trucks = appState.truckloads.filter(t => 
+      sameDate(t.pickupDate, day) &&
+      (!filter || (t.customer || "").toLowerCase().includes(filter) || (t.carrier || "").toLowerCase().includes(filter))
+    );
+    
+    cell.innerHTML = `
+      <div class="cal-cell-head">
+        ${day.getDate()}
+        ${trucks.length > 0 ? `<span class="cal-count">${trucks.length}</span>` : ""}
+      </div>
+      <div class="cal-cell-body">
+        ${trucks.slice(0, 4).map(t => `
+          <div class="cal-chip ${t.status === "Departed" ? "departed" : t.status === "Fully Staged" ? "staged" : ""}" 
+               draggable="true" 
+               data-id="${t.loadId}"
+               title="${t.loadId}\n${t.customer}\n${t.carrier}">
+            ${t.loadId}
+          </div>
+        `).join("")}
+        ${trucks.length > 4 ? `<div style="font-size:10px;color:#6b7280;">+${trucks.length - 4} more</div>` : ""}
+      </div>
+    `;
+    
+    // Drop handlers
+    cell.ondragover = (e) => e.preventDefault();
+    cell.ondrop = (e) => {
+      e.preventDefault();
+      const loadId = e.dataTransfer.getData("text/plain");
+      const truck = appState.truckloads.find(t => t.loadId === loadId);
+      if (truck) {
+        truck.pickupDate = dateStr;
+        truck.stagingLog.push({
+          ts: new Date().toISOString(),
+          action: "Date moved via calendar",
+          user: appState.session.email,
+          note: `Moved to ${dateStr}`
+        });
+        saveState();
+        renderCalendar();
+        logChange("Calendar: Truck Moved", { loadId, newDate: dateStr });
+      }
+    };
+    
+    grid.appendChild(cell);
+  }
+  
+  // Drag handlers
+  document.querySelectorAll(".cal-chip[draggable]").forEach(chip => {
+    chip.ondragstart = (e) => {
+      e.dataTransfer.setData("text/plain", chip.dataset.id);
+    };
+  });
+}
+
+/* ========= METRICS ========= */
+function renderMetrics() {
+  const today = todayYMD();
+  const weekStart = ymd(addDays(new Date(today), -7));
+  const monthStart = today.slice(0, 7) + "-01";
+  
+  const todayTrucks = appState.truckloads.filter(t => sameDate(t.pickupDate, today));
+  const weekTrucks = appState.truckloads.filter(t => t.pickupDate >= weekStart && t.pickupDate <= today);
+  const monthTrucks = appState.truckloads.filter(t => t.pickupDate >= monthStart);
+  
+  $("m-units-today").textContent = todayTrucks.reduce((s, t) => s + (t.units || 0), 0).toLocaleString();
+  $("m-units-week").textContent = weekTrucks.reduce((s, t) => s + (t.units || 0), 0).toLocaleString();
+  $("m-cartons").textContent = appState.truckloads.reduce((s, t) => s + (t.cartons || 0), 0).toLocaleString();
+  $("m-total-loads").textContent = monthTrucks.length;
+  
+  // Status breakdown
+  const staged = appState.truckloads.filter(t => t.status === "Fully Staged").length;
+  const progress = appState.truckloads.filter(t => t.status === "In Progress").length;
+  
+  $("status-breakdown").innerHTML = `
+    <div class="metric-row"><span>Fully Staged</span><strong style="color:#059669;">${staged}</strong></div>
+    <div class="metric-row"><span>In Progress</span><strong style="color:#2563eb;">${progress}</strong></div>
+    <div class="metric-row"><span>Departed</span><strong>${appState.history.length}</strong></div>
+  `;
+  
+  // Carrier breakdown
+  const carriers = {};
+  appState.truckloads.forEach(t => {
+    const c = t.carrier || "Unknown";
+    carriers[c] = (carriers[c] || 0) + 1;
+  });
+  
+  $("carrier-breakdown").innerHTML = Object.entries(carriers)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([c, n]) => `<div class="metric-row"><span>${c}</span><strong>${n}</strong></div>`)
+    .join("");
+  
+  // Data quality
+  const discrepancies = detectDiscrepancies();
+  $("data-quality").innerHTML = `
+    <div class="metric-row"><span>Total Orders</span><strong>${appState.orders.length}</strong></div>
+    <div class="metric-row"><span>Total Truckloads</span><strong>${appState.truckloads.length}</strong></div>
+    <div class="metric-row"><span>Discrepancies</span><strong style="color:${discrepancies.length > 0 ? '#dc2626' : '#059669'};">${discrepancies.length}</strong></div>
+  `;
 }
 
 /* ========= HISTORY ========= */
 function renderHistory() {
   const tb = $("history-body");
   if (!tb) return;
-  tb.innerHTML = "";
-
+  
   const q = ($("history-search")?.value || "").toLowerCase();
-
-  appState.history
-    .filter((h) => {
-      if (!q) return true;
-      return [
-        h.loadId,
-        h.customer,
-        h.carrier,
-        h.pickupDate,
-        h.pickupWindow,
-        h.status
-      ]
-        .some((v) =>
-          String(v || "").toLowerCase().includes(q)
-        );
-    })
-    .forEach((h) => {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${h.loadId}</td>
-        <td>${h.customer || ""}</td>
-        <td>${h.carrier || ""}</td>
-        <td>${h.pickupDate || ""}</td>
-        <td>${h.pickupWindow || ""}</td>
-        <td>${h.status}</td>
-      `;
-      tr.onclick = () => {
-        const fakeRow = document.querySelector(
-          `.tl-row[data-id="${h.loadId}"]`
-        );
-        if (fakeRow) fakeRow.click();
-      };
-      tb.appendChild(tr);
-    });
-}
-
-if ($("history-search"))
-  $("history-search").oninput = () => renderHistory();
-
-if ($("history-clear"))
-  $("history-clear").onclick = () => {
-    $("history-search").value = "";
-    renderHistory();
-  };
-
-/* ========= METRICS ========= */
-function renderMetrics() {
-  const month = new Date().toISOString().slice(0, 7);
-  const mLoads = appState.truckloads.filter((t) =>
-    (t.pickupDate || "").startsWith(month)
-  ).length;
-  const totalCartons = appState.truckloads.reduce(
-    (s, t) => s + (t.cartons || 0),
-    0
-  );
-  const staged = appState.truckloads.filter(
-    (t) => t.status === "Fully staged"
-  ).length;
-
-  if ($("m-total-loads")) $("m-total-loads").textContent = mLoads;
-  if ($("m-cartons")) $("m-cartons").textContent = totalCartons;
-  if ($("m-staged")) $("m-staged").textContent = staged;
-}
-
-/* ========= CALENDAR ========= */
-let calAnchor = new Date();
-
-function dateAdd(d, days) {
-  const x = new Date(d);
-  x.setDate(x.getDate() + days);
-  return x;
-}
-
-function fmtTitle(d) {
-  return d.toLocaleString(undefined, {
-    month: "long",
-    year: "numeric"
+  
+  const filtered = appState.history.filter(h => {
+    if (!q) return true;
+    return [h.loadId, h.customer, h.carrier].some(v => 
+      String(v || "").toLowerCase().includes(q)
+    );
+  });
+  
+  tb.innerHTML = "";
+  
+  if (filtered.length === 0) {
+    tb.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:40px;">No departed loads yet</td></tr>`;
+    return;
+  }
+  
+  filtered.forEach(h => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${h.loadId}</td>
+      <td>${h.customer || ""}</td>
+      <td>${h.carrier || ""}</td>
+      <td>${h.bol || ""}</td>
+      <td>${h.masterBol || ""}</td>
+      <td>${h.pickupDate || ""}</td>
+      <td>${h.pickupWindow || ""}</td>
+      <td>${h.departedAt ? new Date(h.departedAt).toLocaleString() : "-"}</td>
+    `;
+    tb.appendChild(tr);
   });
 }
 
-function renderCalendar() {
-  const grid = $("calendar-grid");
-  if (!grid) return;
-
-  const view = $("cal-view")?.value || "month";
-  const filter = ($("cal-filter")?.value || "").toLowerCase();
-
-  let start, days;
-  const dow = (calAnchor.getDay() + 6) % 7; // Monday = 0
-
-  if (view === "wk") {
-    start = dateAdd(calAnchor, -dow);
-    days = 7;
-  } else if (view === "2w") {
-    start = dateAdd(calAnchor, -dow);
-    days = 14;
-  } else {
-    const mStart = new Date(
-      calAnchor.getFullYear(),
-      calAnchor.getMonth(),
-      1
-    );
-    const lead = (mStart.getDay() + 6) % 7;
-    start = dateAdd(mStart, -lead);
-    days = 42;
-  }
-
-  $("cal-title").textContent = fmtTitle(calAnchor);
-  grid.innerHTML = "";
-
-  for (let i = 0; i < days; i++) {
-    const day = dateAdd(start, i);
-    const cell = document.createElement("div");
-    cell.className = "cal-cell";
-    cell.dataset.date = ymd(day);
-    cell.innerHTML = `
-      <div class="cal-cell-head">${day.getDate()}</div>
-      <div class="cal-cell-body"></div>
+/* ========= MODALS ========= */
+function showDockMapModal() {
+  const today = todayYMD();
+  const todayTrucks = appState.truckloads.filter(t => sameDate(t.pickupDate, today));
+  
+  // Dock doors
+  $("dock-doors-map").innerHTML = DD_DOORS.slice(0, 20).map(door => {
+    const assigned = todayTrucks.find(t => t.stagedLocationDD === door);
+    return `
+      <div class="location-cell ${assigned ? "assigned" : "available"}" title="${assigned ? assigned.loadId : "Available"}">
+        <div>${door}</div>
+        ${assigned ? `<div style="font-size:8px;margin-top:2px;">${assigned.loadId}</div>` : ""}
+      </div>
     `;
-
-    cell.ondragover = (ev) => ev.preventDefault();
-    cell.ondrop = (ev) => {
-      ev.preventDefault();
-      const loadId = ev.dataTransfer.getData("text/plain");
-      const t = appState.truckloads.find((x) => x.loadId === loadId);
-      if (!t) return;
-
-      const targetDate = cell.dataset.date;
-      const win = (t.pickupWindow || "").trim() || "(unspecified)";
-      const limit = getSlotLimit(win, t.loadType);
-      const same = appState.truckloads.filter(
-        (l) =>
-          l.pickupDate === targetDate &&
-          l.loadType === t.loadType &&
-          ((l.pickupWindow || "").trim() || "(unspecified)") === win
-      );
-
-      if (same.length >= limit) {
-        showSuggestionModal({
-          reason: `Move blocked. Time block "${win}" on ${targetDate} is full`,
-          rows: []
-        });
-        return;
-      }
-
-      t.pickupDate = targetDate;
-      logStagingEvent(t, "Pickup date moved on calendar", { note: targetDate });
-      saveState();
-      renderAll();
-    };
-
-    const items = appState.truckloads
-      .filter((t) => t.pickupDate && sameDate(t.pickupDate, day))
-      .filter(
-        (t) =>
-          !filter ||
-          (t.customer || "")
-            .toLowerCase()
-            .includes(filter) ||
-          (t.carrier || "")
-            .toLowerCase()
-            .includes(filter)
-      );
-
-    const body = cell.querySelector(".cal-cell-body");
-
-    items.forEach((t) => {
-      const chip = document.createElement("div");
-      chip.className = "cal-chip";
-      chip.draggable = true;
-      chip.ondragstart = (ev) =>
-        ev.dataTransfer.setData("text/plain", t.loadId);
-
-      const time = t.pickupWindow ? `${t.pickupWindow} | ` : "";
-      chip.textContent = `${time}${t.customer || ""} | ${
-        t.carrier || ""
-      }`;
-      chip.title = `${t.loadId}\n${t.pickupDate} ${
-        t.pickupWindow || ""
-      }\n${t.customer || ""} | ${t.carrier || ""}`;
-      chip.onclick = () => {
-        const row = document.querySelector(
-          `.tl-row[data-id="${t.loadId}"]`
-        );
-        if (row) row.click();
-      };
-      body.appendChild(chip);
-    });
-
-    grid.appendChild(cell);
-  }
+  }).join("");
+  
+  // Staging lanes
+  $("staging-lanes-map").innerHTML = SL_LANES.slice(0, 20).map(lane => {
+    const assigned = todayTrucks.find(t => t.stagedLocationSL === lane);
+    return `
+      <div class="location-cell ${assigned ? "assigned" : "available"}" title="${assigned ? assigned.loadId : "Available"}">
+        <div>${lane}</div>
+        ${assigned ? `<div style="font-size:8px;margin-top:2px;">${assigned.loadId}</div>` : ""}
+      </div>
+    `;
+  }).join("");
+  
+  $("dock-map-overlay").classList.remove("hidden");
 }
 
-if ($("cal-prev"))
-  $("cal-prev").onclick = () => {
-    const v = $("cal-view").value;
-    calAnchor =
-      v === "wk"
-        ? dateAdd(calAnchor, -7)
-        : v === "2w"
-        ? dateAdd(calAnchor, -14)
-        : new Date(
-            calAnchor.getFullYear(),
-            calAnchor.getMonth() - 1,
-            1
-          );
-    renderCalendar();
-  };
+function showBulkEditModal() {
+  $("bulk-pickup-date").value = "";
+  $("bulk-pickup-window").value = "";
+  $("bulk-carrier").value = "";
+  $("bulk-edit-overlay").classList.remove("hidden");
+}
 
-if ($("cal-next"))
-  $("cal-next").onclick = () => {
-    const v = $("cal-view").value;
-    calAnchor =
-      v === "wk"
-        ? dateAdd(calAnchor, 7)
-        : v === "2w"
-        ? dateAdd(calAnchor, 14)
-        : new Date(
-            calAnchor.getFullYear(),
-            calAnchor.getMonth() + 1,
-            1
-          );
-    renderCalendar();
-  };
-
-if ($("cal-view")) $("cal-view").onchange = renderCalendar;
-if ($("cal-filter")) $("cal-filter").oninput = renderCalendar;
-
-/* ========= SETTINGS: Clear Saved Data ========= */
-if ($("clear-saved-btn"))
-  $("clear-saved-btn").onclick = () => {
-    if (confirm("This will remove all saved state on this browser.")) {
-      localStorage.removeItem(STORAGE_KEY);
-      indexedDB.deleteDatabase("ncdcDB");
-      location.reload();
+function applyBulkEdit() {
+  const date = $("bulk-pickup-date").value;
+  const window = $("bulk-pickup-window").value;
+  const carrier = $("bulk-carrier").value.trim();
+  
+  let updated = 0;
+  appState.truckloads.forEach(t => {
+    if (selectedTrucks.has(t.loadId)) {
+      if (date) t.pickupDate = date;
+      if (window) t.pickupWindow = window;
+      if (carrier) t.carrier = carrier;
+      t.stagingLog.push({
+        ts: new Date().toISOString(),
+        action: "Bulk edit",
+        user: appState.session.email,
+        note: JSON.stringify({ date, window, carrier })
+      });
+      updated++;
     }
-  };
-
-/* ========= NIGHTLY HISTORY ARCHIVAL ========= */
-function sweepHistoryIfMidnight() {
-  const localYmd = todayYMD();
-  if (appState.settings.lastHistorySweepYMD === localYmd) return;
-
-  appState.truckloads
-    .filter(
-      (t) =>
-        t.status === "Departed" &&
-        t.pickupDate &&
-        t.pickupDate < localYmd
-    )
-    .forEach((t) => {
-      if (
-        !appState.history.find((h) => h.loadId === t.loadId)
-      ) {
-        appState.history.push({
-          loadId: t.loadId,
-          customer: t.customer,
-          carrier: t.carrier,
-          pickupDate: t.pickupDate,
-          pickupWindow: t.pickupWindow,
-          status: "Departed"
-        });
-      }
-    });
-
-  appState.settings.lastHistorySweepYMD = localYmd;
+  });
+  
+  selectedTrucks.clear();
+  $("bulk-edit-overlay").classList.add("hidden");
   saveState();
-  renderHistory();
+  renderAll();
+  logChange("Bulk Edit Applied", { count: updated });
 }
 
-setInterval(sweepHistoryIfMidnight, 60 * 1000);
+function showAlertsModal() {
+  const list = $("alerts-list");
+  list.innerHTML = "";
+  
+  if (appState.alerts.length === 0) {
+    list.innerHTML = `<div style="text-align:center;padding:40px;color:#6b7280;">No alerts at this time</div>`;
+  } else {
+    appState.alerts.forEach(alert => {
+      const div = document.createElement("div");
+      div.className = `alert-item ${alert.type}`;
+      div.innerHTML = `
+        <div>
+          <strong>${alert.type === "error" ? "🔴 Error" : "⚠️ Warning"}</strong>
+          <div style="font-size:13px;margin-top:4px;">${alert.message}</div>
+        </div>
+        <button class="alert-dismiss" onclick="dismissAlert('${alert.id}')">×</button>
+      `;
+      list.appendChild(div);
+    });
+  }
+  
+  $("alerts-overlay").classList.remove("hidden");
+}
 
-/* ========= RENDER ALL + BOOT SEQUENCE ========= */
+function dismissAlert(id) {
+  appState.alerts = appState.alerts.filter(a => a.id !== id);
+  showAlertsModal();
+  updateAlertsBadge();
+}
+
+function showChangelogModal() {
+  const list = $("changelog-list");
+  list.innerHTML = "";
+  
+  appState.changeLog.slice(0, 30).forEach(log => {
+    const div = document.createElement("div");
+    div.className = "changelog-item";
+    div.innerHTML = `
+      <div class="changelog-action">${log.action}</div>
+      <div class="changelog-meta">${new Date(log.timestamp).toLocaleString()} • ${log.user}</div>
+    `;
+    list.appendChild(div);
+  });
+  
+  $("changelog-overlay").classList.remove("hidden");
+}
+
+function exportData() {
+  const data = {
+    orders: appState.orders,
+    truckloads: appState.truckloads,
+    history: appState.history,
+    exportedAt: new Date().toISOString()
+  };
+  
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `ncdc-backup-${todayYMD()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  
+  logChange("Data Exported", {});
+}
+
+/* ========= RENDER ALL ========= */
 function renderAll() {
-  renderOrders(true);
+  renderOrders();
   renderTruckloads();
   renderDock();
   renderTodays();
   renderHistory();
   renderMetrics();
+  renderDiscrepancies();
 }
 
-(async function boot() {
-  // Step 1: LocalStorage
-  loadStateSync();
-
-  // Step 2: IndexedDB (if any)
-  const idbState = await idbGet(STORAGE_KEY);
-  if (idbState) {
-    Object.assign(appState, idbState);
-  }
-
-  // Step 3: ensure derived fields exist
-  appState.orders = (appState.orders || []).map((o) =>
-    o.__shipBy ? o : computeOrderDerived(o)
-  );
-
-  // Ensure stagingLog exists
-  appState.truckloads = (appState.truckloads || []).map((t) => ({
-    stagingLog: [],
-    ...t,
-    stagingLog: Array.isArray(t.stagingLog) ? t.stagingLog : []
-  }));
-
-  // Step 4: Auto-login
+/* ========= INITIALIZATION ========= */
+function init() {
+  loadState();
+  
+  // Auto-login if session exists
   if (appState.session?.authed) {
     $("login-screen").classList.add("hidden");
     $("app-shell").classList.remove("hidden");
+    updateUserDisplay();
+    applyRolePermissions();
+    renderAll();
+    checkAlerts();
   }
+  
+  setupNavigation();
+  
+  // Event listeners
+  $("login-btn").onclick = handleLogin;
+  $("logout-btn").onclick = handleLogout;
+  $("orders-csv").onchange = handleCSVUpload;
+  $("orders-search").oninput = renderOrders;
+  $("dock-search").oninput = renderDock;
+  $("truckloads-search").oninput = renderTruckloads;
+  $("history-search").oninput = renderHistory;
+  
+  $("create-truckload-btn").onclick = showCreateTruckModal;
+  $("auto-route-btn").onclick = runAutoRouter;
+  $("tl-save").onclick = saveTruckload;
+  $("tl-cancel").onclick = () => $("modal-overlay").classList.add("hidden");
+  $("tl-detail-close").onclick = () => $("tl-detail-overlay").classList.add("hidden");
+  
+  $("auto-confirm").onclick = confirmAutoRoute;
+  $("auto-cancel").onclick = () => $("auto-overlay").classList.add("hidden");
+  
+  $("dock-history-close").onclick = () => $("dock-history-overlay").classList.add("hidden");
+  $("dock-map-close").onclick = () => $("dock-map-overlay").classList.add("hidden");
+  
+  $("bulk-apply").onclick = applyBulkEdit;
+  $("bulk-cancel").onclick = () => $("bulk-edit-overlay").classList.add("hidden");
+  
+  $("alerts-close").onclick = () => $("alerts-overlay").classList.add("hidden");
+  $("changelog-close").onclick = () => $("changelog-overlay").classList.add("hidden");
+  
+  $("undo-btn").onclick = () => alert("Undo feature coming soon!");
+  $("changelog-btn").onclick = showChangelogModal;
+  $("export-btn").onclick = exportData;
+  
+  $("clear-all-data").onclick = () => {
+    if (confirm("Clear ALL data? This cannot be undone.")) {
+      localStorage.removeItem(STORAGE_KEY);
+      location.reload();
+    }
+  };
+  
+  // Calendar
+  $("cal-prev").onclick = () => {
+    const v = $("cal-view").value;
+    calAnchor = v === "wk" ? addDays(calAnchor, -7) : v === "2w" ? addDays(calAnchor, -14) : new Date(calAnchor.getFullYear(), calAnchor.getMonth() - 1, 1);
+    renderCalendar();
+  };
+  $("cal-next").onclick = () => {
+    const v = $("cal-view").value;
+    calAnchor = v === "wk" ? addDays(calAnchor, 7) : v === "2w" ? addDays(calAnchor, 14) : new Date(calAnchor.getFullYear(), calAnchor.getMonth() + 1, 1);
+    renderCalendar();
+  };
+  $("cal-today").onclick = () => { calAnchor = new Date(); renderCalendar(); };
+  $("cal-view").onchange = renderCalendar;
+  $("cal-filter").oninput = renderCalendar;
+  
+  $("select-all-orders").onchange = (e) => {
+    document.querySelectorAll("#orders-body .po-check").forEach(chk => {
+      chk.checked = e.target.checked;
+      if (e.target.checked) selectedPOs.add(chk.dataset.po);
+      else selectedPOs.delete(chk.dataset.po);
+    });
+    $("selected-count").textContent = selectedPOs.size;
+  };
+  
+  // Auto-save every 30 seconds
+  setInterval(() => {
+    if (appState.session.authed) saveState();
+  }, 30000);
+}
 
-  // Step 5: initial render
-  renderAll();
-
-  // Step 6: history sweep
-  sweepHistoryIfMidnight();
-
-  // Step 7: persist current state snapshot
-  saveState();
-})();
+// Start the app
+document.addEventListener("DOMContentLoaded", init);
