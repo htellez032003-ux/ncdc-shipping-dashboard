@@ -701,11 +701,6 @@ function buildAutoProposals(ordersToRoute) {
   return proposals;
 }
 
-// NCDC Shipping Dashboard - Complete JavaScript
-// Continuation from where previous code was cut off
-
-// ===== CONTINUING FROM buildAutoProposals() =====
-
 function confirmAutoRoute() {
   const selectedIds = new Set(
     [...document.querySelectorAll(".auto-check:checked")].map(c => c.dataset.id)
@@ -1958,47 +1953,6 @@ function timeOverlaps(time1, time2) {
   return !(end1 <= start2 || end2 <= start1);
 }
 
-function sameDate(date1, date2) {
-  if (!date1 || !date2) return false;
-  const d1 = typeof date1 === "string" ? new Date(date1) : date1;
-  const d2 = typeof date2 === "string" ? new Date(date2) : date2;
-  return d1.toDateString() === d2.toDateString();
-}
-
-function ymd(date) {
-  if (!date) return "";
-  const d = typeof date === "string" ? new Date(date) : date;
-  return d.toISOString().slice(0, 10);
-}
-
-function addDays(date, days) {
-  const result = new Date(date);
-  result.setDate(result.getDate() + days);
-  return result;
-}
-
-function sumNumber(arr, field) {
-  return arr.reduce((sum, item) => sum + (parseFloat(item[field]) || 0), 0);
-}
-
-function mostCommon(arr) {
-  if (!arr || arr.length === 0) return "";
-  const counts = {};
-  arr.forEach(v => counts[v] = (counts[v] || 0) + 1);
-  return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
-}
-
-function earliestDate(dates) {
-  const valid = dates.filter(d => d).map(d => new Date(d));
-  if (valid.length === 0) return todayYMD();
-  return ymd(new Date(Math.min(...valid)));
-}
-
-function isSPSCarrier(carrier) {
-  const spsCarriers = ["FXB", "WEB", "UPS", "EST", "OPR"];
-  return spsCarriers.includes(carrier);
-}
-
 /* ========= STATE MANAGEMENT ========= */
 function saveState() {
   try {
@@ -2106,3 +2060,6 @@ if (typeof module !== 'undefined' && module.exports) {
     init
   };
 }
+
+// Start the app
+document.addEventListener('DOMContentLoaded', init);
