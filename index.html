@@ -364,10 +364,43 @@
       <section id="tab-settings" class="tab-panel hidden">
         <header class="pane-header">
           <h2>Settings</h2>
-          <p>Capacity per time block and general options.</p>
+          <p>Customer rules, center patterns, and general options.</p>
         </header>
 
         <div class="settings-grid">
+          <!-- Customer Rules -->
+          <div class="setting-block">
+            <h3>Customer Rules</h3>
+            <p class="muted">Define default carrier, time blocks, and limits per customer</p>
+            <div id="customer-rules-list" class="rules-list"></div>
+            <div class="add-rule-form">
+              <input id="rule-customer" type="text" placeholder="Customer name" class="input-slim" />
+              <input id="rule-carrier" type="text" placeholder="Default carrier" class="input-slim" />
+              <select id="rule-timeblock" class="input-slim">
+                <option value="">Time block...</option>
+                <option value="08:00-10:00">8am-10am</option>
+                <option value="10:00-12:00">10am-12pm</option>
+                <option value="12:00-14:00">12pm-2pm</option>
+                <option value="14:00-16:00">2pm-4pm</option>
+                <option value="16:00-18:00">4pm-6pm</option>
+              </select>
+              <button class="btn tiny primary" onclick="addCustomerRule()">Add Rule</button>
+            </div>
+          </div>
+
+          <!-- Center Patterns -->
+          <div class="setting-block">
+            <h3>Store → Center Patterns</h3>
+            <p class="muted">Map stores to their consolidation centers</p>
+            <div id="center-patterns-list" class="rules-list"></div>
+            <div class="add-rule-form">
+              <input id="pattern-store" type="text" placeholder="Store #" class="input-slim" />
+              <input id="pattern-center" type="text" placeholder="Center code" class="input-slim" />
+              <button class="btn tiny primary" onclick="addCenterPattern()">Add Pattern</button>
+            </div>
+          </div>
+
+          <!-- Time Blocks -->
           <div class="setting-block">
             <h3>Time Blocks</h3>
             <div class="time-blocks-list">
@@ -379,6 +412,7 @@
             </div>
           </div>
 
+          <!-- Capacity Limits -->
           <div class="setting-block">
             <h3>Capacity Limits</h3>
             <div class="capacity-info">
@@ -387,10 +421,40 @@
             </div>
           </div>
 
+          <!-- Danger Zone -->
           <div class="setting-block danger-zone">
             <h3>Danger Zone</h3>
             <button id="clear-all-data" class="btn danger">Clear All Data</button>
             <p class="muted">This will permanently delete all orders, truckloads, and history</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- APPOINTMENTS TAB -->
+      <section id="tab-appointments" class="tab-panel hidden">
+        <header class="pane-header">
+          <div class="header-with-action">
+            <div>
+              <h2>Appointments</h2>
+              <p>Schedule carrier pickups and dock reservations</p>
+            </div>
+            <button class="btn primary" onclick="showNewAppointmentModal()">+ New Appointment</button>
+          </div>
+        </header>
+
+        <div class="appointments-grid">
+          <div class="appointments-calendar">
+            <div class="appt-cal-header">
+              <button class="btn tiny secondary" onclick="prevApptWeek()">◀</button>
+              <span id="appt-week-title"></span>
+              <button class="btn tiny secondary" onclick="nextApptWeek()">▶</button>
+            </div>
+            <div id="appointments-week-view" class="appt-week-view"></div>
+          </div>
+          
+          <div class="appointments-list-section">
+            <h3>Upcoming Appointments</h3>
+            <div id="appointments-list"></div>
           </div>
         </div>
       </section>
