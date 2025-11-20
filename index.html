@@ -7,15 +7,14 @@
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
-  <!-- LOGIN -->
   <div id="login-screen" class="login-screen">
     <div class="login-card">
       <h1 class="app-title">NCDC Shipping Dashboard</h1>
       <p class="app-subtitle">Internal Scheduling &amp; Dock Control</p>
       <label>Email</label>
-      <input id="login-email" type="email" value="htellez032003@gmail.com" />
+      <input id="login-email" type="email" />
       <label>Password</label>
-      <input id="login-password" type="password" value="Ltapaprel040523" />
+      <input id="login-password" type="password" />
       <label>Role</label>
       <select id="login-role">
         <option value="admin">Admin</option>
@@ -28,7 +27,6 @@
     </div>
   </div>
 
-  <!-- APP SHELL -->
   <div id="app-shell" class="app-shell hidden">
     <aside class="sidebar">
       <div class="sidebar-header">
@@ -39,7 +37,6 @@
         </div>
       </div>
       
-      <!-- Alerts Badge -->
       <div id="alerts-badge" class="alerts-badge hidden" onclick="showAlertsModal()">
         <span>🔔 Alerts</span>
         <div id="alerts-count"></div>
@@ -61,7 +58,6 @@
     </aside>
 
     <main class="main">
-      <!-- TOP BAR -->
       <div class="top-bar">
         <div class="top-bar-left">
           <span id="current-user-display"></span>
@@ -74,7 +70,6 @@
         </div>
       </div>
 
-      <!-- ORDERS TAB -->
       <section id="tab-orders" class="tab-panel">
         <header class="pane-header">
           <h2>Orders</h2>
@@ -88,7 +83,6 @@
             <p class="csv-updated" id="csv-updated">CSV updated: --</p>
           </div>
 
-          <!-- Quick Filters -->
           <div class="quick-filters">
             <button class="btn tiny" onclick="applyQuickFilter('high')">🔴 HIGH Priority</button>
             <button class="btn tiny" onclick="applyQuickFilter('unassigned')">⚪ Unassigned</button>
@@ -118,16 +112,22 @@
 
         <div id="active-filters" class="chips"></div>
 
-        <!-- ORDERS LIST -->
         <div class="orders-grid">
           <table>
             <thead>
               <tr id="orders-head">
                 <th><input type="checkbox" id="select-all-orders" /></th>
-                <th>PO</th><th>Customer</th><th>Carrier</th>
-                <th>Units</th><th>Cartons</th><th>BOL</th>
-                <th>Master BOL</th><th>Start Date</th><th>Cancel Date</th>
-                <th>Priority</th><th>Load ID</th>
+                <th>PO</th>
+                <th>Customer</th>
+                <th>Cust Name</th> <th>Carrier</th>
+                <th>Units</th>
+                <th>Cartons</th>
+                <th>BOL</th>
+                <th>Master BOL</th>
+                <th>Start Date</th>
+                <th>Cancel Date</th>
+                <th>Priority</th>
+                <th>Load ID</th>
               </tr>
             </thead>
             <tbody id="orders-body"></tbody>
@@ -135,7 +135,6 @@
         </div>
       </section>
 
-      <!-- BC & DASHBOARD DISCREPANCIES TAB -->
       <section id="tab-discrepancies" class="tab-panel hidden">
         <header class="pane-header">
           <h2>BC &amp; Dashboard Discrepancies</h2>
@@ -164,7 +163,6 @@
         </div>
       </section>
 
-      <!-- DOCK TAB -->
       <section id="tab-dock" class="tab-panel hidden">
         <header class="pane-header">
           <div class="header-with-action">
@@ -196,7 +194,6 @@
         </div>
       </section>
 
-      <!-- TODAY'S PICKUPS TAB -->
       <section id="tab-todays" class="tab-panel hidden">
         <header class="pane-header">
           <h2>Today's Pickups</h2>
@@ -229,7 +226,6 @@
         </div>
       </section>
 
-      <!-- TRUCKLOADS TAB -->
       <section id="tab-truckloads" class="tab-panel hidden">
         <header class="pane-header">
           <div class="header-with-action">
@@ -260,7 +256,6 @@
         </div>
       </section>
 
-      <!-- CALENDAR TAB -->
       <section id="tab-calendar" class="tab-panel hidden">
         <header class="pane-header">
           <h2>Calendar</h2>
@@ -281,7 +276,6 @@
         <p class="muted">Drag a load chip to another day to change its pickup date.</p>
       </section>
 
-      <!-- METRICS TAB -->
       <section id="tab-metrics" class="tab-panel hidden">
         <header class="pane-header">
           <h2>Metrics</h2>
@@ -309,7 +303,6 @@
         </div>
       </section>
 
-      <!-- HISTORY TAB -->
       <section id="tab-history" class="tab-panel hidden">
         <header class="pane-header">
           <h2>History</h2>
@@ -331,7 +324,6 @@
         </table>
       </section>
 
-      <!-- TEAM TAB -->
       <section id="tab-team" class="tab-panel hidden">
         <header class="pane-header">
           <h2>Team</h2>
@@ -360,7 +352,6 @@
         </div>
       </section>
 
-      <!-- SETTINGS TAB -->
       <section id="tab-settings" class="tab-panel hidden">
         <header class="pane-header">
           <h2>Settings</h2>
@@ -368,7 +359,6 @@
         </header>
 
         <div class="settings-grid">
-          <!-- Customer Rules -->
           <div class="setting-block">
             <h3>Customer Rules</h3>
             <p class="muted">Define default carrier, time blocks, and limits per customer</p>
@@ -388,7 +378,6 @@
             </div>
           </div>
 
-          <!-- Center Patterns -->
           <div class="setting-block">
             <h3>Store → Center Patterns</h3>
             <p class="muted">Map stores to their consolidation centers</p>
@@ -400,7 +389,6 @@
             </div>
           </div>
 
-          <!-- Time Blocks -->
           <div class="setting-block">
             <h3>Time Blocks</h3>
             <div class="time-blocks-list">
@@ -412,7 +400,6 @@
             </div>
           </div>
 
-          <!-- Capacity Limits -->
           <div class="setting-block">
             <h3>Capacity Limits</h3>
             <div class="capacity-info">
@@ -421,7 +408,6 @@
             </div>
           </div>
 
-          <!-- Danger Zone -->
           <div class="setting-block danger-zone">
             <h3>Danger Zone</h3>
             <button id="clear-all-data" class="btn danger">Clear All Data</button>
@@ -430,7 +416,6 @@
         </div>
       </section>
 
-      <!-- APPOINTMENTS TAB -->
       <section id="tab-appointments" class="tab-panel hidden">
         <header class="pane-header">
           <div class="header-with-action">
@@ -461,7 +446,6 @@
     </main>
   </div>
 
-  <!-- CREATE / UPDATE TRUCKLOAD MODAL -->
   <div id="modal-overlay" class="modal-overlay hidden">
     <div class="modal">
       <h3>Create Truckload</h3>
@@ -493,7 +477,6 @@
     </div>
   </div>
 
-  <!-- TRUCKLOAD DETAIL / EDIT MODAL -->
   <div id="tl-detail-overlay" class="modal-overlay hidden">
     <div class="modal modal-wide">
       <h3 id="tl-detail-title">Truckload Detail</h3>
@@ -532,7 +515,6 @@
     </div>
   </div>
 
-  <!-- AUTO-ROUTE MODAL -->
   <div id="auto-overlay" class="modal-overlay hidden">
     <div class="modal modal-wide">
       <h3>Auto-Route Proposals</h3>
@@ -564,7 +546,6 @@
     </div>
   </div>
 
-  <!-- DOCK HISTORY MODAL -->
   <div id="dock-history-overlay" class="modal-overlay hidden">
     <div class="modal modal-wide">
       <h3 id="dock-history-title">Staging History</h3>
@@ -588,7 +569,6 @@
     </div>
   </div>
 
-  <!-- DOCK MAP MODAL -->
   <div id="dock-map-overlay" class="modal-overlay hidden">
     <div class="modal modal-wide">
       <h3>Dock Floor Map</h3>
@@ -613,7 +593,6 @@
     </div>
   </div>
 
-  <!-- BULK EDIT MODAL -->
   <div id="bulk-edit-overlay" class="modal-overlay hidden">
     <div class="modal">
       <h3>Bulk Edit Truckloads</h3>
@@ -638,7 +617,6 @@
     </div>
   </div>
 
-  <!-- ALERTS MODAL -->
   <div id="alerts-overlay" class="modal-overlay hidden">
     <div class="modal">
       <h3>Alerts & Notifications</h3>
@@ -649,7 +627,6 @@
     </div>
   </div>
 
-  <!-- CHANGELOG MODAL -->
   <div id="changelog-overlay" class="modal-overlay hidden">
     <div class="modal">
       <h3>Change Log</h3>
