@@ -1,5 +1,5 @@
 // NCDC Shipping Dashboard - script.js
-// Rebuilt for HTML you provided + BlueCherry CSV + Author# as Load ID
+// Fully merged & cleaned
 
 /* ========= CONSTANTS ========= */
 const STORAGE_KEY = "ncdcShippingState_VLT10";
@@ -117,6 +117,14 @@ function isSPSCarrier(carrier) {
   return ["FXB", "WEB", "UPS", "EST", "OPR"].includes(c);
 }
 
+function timeOverlaps(time1, time2) {
+  if (!time1 || !time2) return false;
+  // Expect "HH:MM-HH:MM"
+  const [s1, e1] = time1.split("-").map(t => parseInt(t.replace(":", ""), 10));
+  const [s2, e2] = time2.split("-").map(t => parseInt(t.replace(":", ""), 10));
+  return !(e1 <= s2 || e2 <= s1);
+}
+
 /* ========= STATE MANAGEMENT ========= */
 function saveState() {
   try {
@@ -140,6 +148,12 @@ function loadState() {
     appState.alerts = saved.alerts || [];
     appState.savedFilters = saved.savedFilters || [];
     appState.settings = { ...appState.settings, ...(saved.settings || {}) };
+    
+    // Ensure arrays exist on trucks
+    appState.truckloads.forEach(t => {
+      if (!Array.isArray(t.orders)) t.orders = t.orders ? [...t.orders] : [];
+      if (!Array.isArray(t.stagingLog)) t.stagingLog = [];
+    });
   } catch (e) {
     console.error("Failed to load state:", e);
   }
@@ -263,7 +277,7 @@ function applyRolePermissions() {
       perms.includes(tab) ||
       tab === "team" ||
       tab === "settings" ||
-      tab === "appointments"; // supervisors/admins will see everything anyway
+      tab === "appointments"; 
 
     btn.style.display = allowed ? "block" : "none";
   });
@@ -293,7 +307,6 @@ function setupNavigation() {
 
 /* ========= CSV UPLOAD / PARSE ========= */
 
-// Simple CSV parser – assumes standard BC export (no embedded newlines)
 function parseCSV(text) {
   const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
   if (lines.length < 2) return [];
@@ -305,7 +318,7 @@ function parseCSV(text) {
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
     const raw = lines[i];
-    const cells = raw.split(","); // good enough for BC export; if they ever quote with commas we’ll have to upgrade this
+    const cells = raw.split(","); 
     const obj = {};
     headers.forEach((h, idx) => {
       obj[h] = (cells[idx] || "").trim().replace(/^"|"$/g, "");
@@ -315,9 +328,7 @@ function parseCSV(text) {
   return rows;
 }
 
-// Normalize BlueCherry -> internal fields + derived attrs
 function normalizeOrder(o) {
-  // Canonical fields
   const po = o.PO || o["PO Num"] || "";
   const customer = o.Customer || o["Cust Name"] || "";
   const carrier = o.Carrier || o.Shipper || "";
@@ -338,8 +349,6 @@ function normalizeOrder(o) {
   const cancelDate = o["Cancel Date"] || "";
   const readyDate = o["Ready Date"] || "";
   const readyTime = o["Ready Time"] || "";
-
-  // Author# is the “hidden” load ID from BC
   const authorLoadId = o["Author#"] || "";
 
   const order = {
@@ -358,12 +367,10 @@ function normalizeOrder(o) {
     "Ready Time": readyTime
   };
 
-  // If Load ID not present, map Author# into it
   if (!order["Load ID"] && authorLoadId) {
     order["Load ID"] = authorLoadId;
   }
 
-  // Derived fields
   order.__units = units;
   order.__cartons = cartons;
 
@@ -371,11 +378,9 @@ function normalizeOrder(o) {
   const cancel = parseYMD(cancelDate);
   const ready = parseYMD(readyDate);
 
-  // Ship-by: prefer Ready Date, else Start Date, else Cancel, else today
   let shipBy = ready || start || cancel || new Date(todayYMD());
   order.__shipBy = ymd(shipBy);
 
-  // Recommended ship: don't ship after cancel date
   if (cancel && shipBy > cancel) {
     order.__recommendedShip = ymd(cancel);
   } else {
@@ -409,14 +414,13 @@ function mergeOrdersFromCSV(newRows) {
     const key = keyFor(normalized);
     if (map.has(key)) {
       const existing = map.get(key);
-      // BC is source of truth for these fields, but preserve manual Ready Date / Load ID
       const merged = {
         ...existing,
         ...normalized,
         "Ready Date": existing["Ready Date"] || normalized["Ready Date"],
         "Load ID": existing["Load ID"] || normalized["Load ID"]
       };
-      map.set(key, normalizeOrder(merged)); // re-derive
+      map.set(key, normalizeOrder(merged)); 
     } else {
       map.set(key, normalized);
     }
@@ -425,7 +429,6 @@ function mergeOrdersFromCSV(newRows) {
   appState.orders = [...map.values()];
 }
 
-// After orders are merged, auto-build trucks from any orders with a Load ID
 function rebuildTruckloadsFromOrders() {
   const byLoad = new Map();
 
@@ -436,7 +439,6 @@ function rebuildTruckloadsFromOrders() {
     byLoad.get(loadId).push(o);
   });
 
-  // Keep any manually created trucks that don't exist in CSV
   const preserved = appState.truckloads.filter(
     t => !byLoad.has(t.loadId)
   );
@@ -445,11 +447,8 @@ function rebuildTruckloadsFromOrders() {
   for (const [loadId, orders] of byLoad.entries()) {
     const customer = mostCommon(orders.map(o => o.Customer));
     const carrier = mostCommon(orders.map(o => o.Carrier || o.Shipper));
-    const pickupDate =
-      earliestDate(
-        orders.map(o => o["Ready Date"] || o["Start Date"] || o["Cancel Date"])
-      );
-    const loadType = "Truckload"; // default; can be refined by capacity if you want
+    const pickupDate = earliestDate(orders.map(o => o["Ready Date"] || o["Start Date"] || o["Cancel Date"]));
+    const loadType = "Truckload";
 
     const cartons = sumNumber(orders, "__cartons");
     const units = sumNumber(orders, "__units");
@@ -485,7 +484,6 @@ function rebuildTruckloadsFromOrders() {
   appState.truckloads = [...preserved, ...rebuilt];
 }
 
-/* ========= CSV HANDLER ========= */
 function handleCSVUpload(e) {
   const file = e.target.files[0];
   if (!file) return;
@@ -508,7 +506,6 @@ function handleCSVUpload(e) {
 /* ========= ORDERS RENDERING & FILTERS ========= */
 
 function initOrdersFilters() {
-  // populate column dropdown based on first order
   const colSel = $("orders-col-filter");
   if (!colSel) return;
   colSel.innerHTML = "";
@@ -530,7 +527,6 @@ function initOrdersFilters() {
     colSel.appendChild(opt);
   });
 
-  // render any saved filters chips
   renderActiveFilters();
   populateSavedFiltersDropdown();
 }
@@ -694,7 +690,6 @@ function renderOrders() {
     tb.appendChild(row);
   });
 
-  // checkbox handlers
   document.querySelectorAll(".po-check").forEach(chk => {
     chk.onchange = (e) => {
       const po = e.target.dataset.po;
@@ -799,6 +794,7 @@ function assignSelectedPOsToExistingLoad() {
   saveState();
   renderAll();
 }
+
 /* ========= TRUCKLOAD MANAGEMENT ========= */
 
 function renderTruckloads() {
@@ -908,48 +904,94 @@ function saveTruckDetail() {
 /* ========= CREATE TRUCKLOAD ========= */
 
 function showCreateTruckModal() {
+  const titleEl = $("modal-overlay")?.querySelector("h3");
+  if (titleEl) titleEl.textContent = "Create Truckload";
+
   $("tl-load-id").value = "";
-  $("tl-customer").value = "";
-  $("tl-carrier").value = "";
-  $("tl-bol").value = "";
-  $("tl-master").value = "";
+  $("tl-load-type").value = "LTL";
   $("tl-pickup-date").value = todayYMD();
   $("tl-pickup-window").value = TIME_BLOCKS[0].window;
-  $("tl-load-type").value = "LTL";
+  $("tl-carrier").value = "";
+  $("tl-customer").value = "";
+  $("tl-bol").value = "";
+
+  $("modal-selected-pos").textContent = selectedPOs.size
+    ? `Selected POs: ${[...selectedPOs].join(", ")}`
+    : "No POs selected. You can still create an empty truck.";
 
   $("modal-overlay").classList.remove("hidden");
 }
 
-function saveTruckloadModal() {
-  const loadId = $("tl-load-id").value.trim() || `LOAD-${Date.now()}`;
+function saveTruckload() {
+  let loadId = $("tl-load-id").value.trim();
+  if (!loadId) loadId = `TL-${Date.now()}`;
 
   let t = appState.truckloads.find(x => x.loadId === loadId);
+  const isNew = !t;
+
   if (!t) {
     t = {
       loadId,
       orders: [],
+      stagingLog: [],
       createdAt: new Date().toISOString(),
       createdBy: appState.session.email,
       status: "Not Started",
-      stagedLocationSL: "",
-      stagedLocationDD: "",
-      stagingLog: []
+      cartons: 0,
+      units: 0
     };
     appState.truckloads.push(t);
   }
 
-  t.customer = $("tl-customer").value.trim();
-  t.carrier = $("tl-carrier").value.trim();
+  t.loadId = loadId;
   t.loadType = $("tl-load-type").value;
   t.pickupDate = $("tl-pickup-date").value;
   t.pickupWindow = $("tl-pickup-window").value;
+  t.carrier = $("tl-carrier").value.trim();
+  t.customer = $("tl-customer").value.trim();
   t.bol = $("tl-bol").value.trim();
-  t.masterBol = $("tl-master").value.trim();
+  // master BOL, units, cartons are derived from orders
 
-  logChange("Truckload saved", { loadId });
+  // Attach selected POs (if any)
+  if (!Array.isArray(t.orders)) t.orders = [];
+  const newlyAdded = [];
+
+  [...selectedPOs].forEach(po => {
+    const o = appState.orders.find(x => (x.PO || x["PO Num"]) === po);
+    if (!o) return;
+    o["Load ID"] = loadId;
+    if (!t.orders.includes(po)) {
+      t.orders.push(po);
+      newlyAdded.push(po);
+    }
+  });
+
+  t.units = sumNumber(
+    appState.orders.filter(o => t.orders.includes(o.PO || o["PO Num"])),
+    "__units"
+  );
+  t.cartons = sumNumber(
+    appState.orders.filter(o => t.orders.includes(o.PO || o["PO Num"])),
+    "__cartons"
+  );
+
+  if (!Array.isArray(t.stagingLog)) t.stagingLog = [];
+  t.stagingLog.push({
+    ts: new Date().toISOString(),
+    action: isNew ? "Created" : "Edited",
+    user: appState.session.email,
+    note: newlyAdded.length ? `Added POs: ${newlyAdded.join(", ")}` : ""
+  });
+
+  logChange(isNew ? "Truckload created" : "Truckload updated", {
+    loadId,
+    pos: t.orders.length
+  });
+
+  selectedPOs.clear();
+  $("modal-overlay").classList.add("hidden");
   saveState();
   renderAll();
-  $("modal-overlay").classList.add("hidden");
 }
 
 /* ========= BULK EDIT ========= */
@@ -1174,6 +1216,7 @@ function confirmAutoRoute() {
   renderAll();
   $("auto-overlay").classList.add("hidden");
 }
+
 /* ========= APPOINTMENT SCHEDULING ========= */
 
 function showAppointmentModal(loadId) {
@@ -1625,6 +1668,7 @@ function findDiscrepancies() {
 
   return list;
 }
+
 /* ========= HISTORY ========= */
 
 function renderHistory() {
@@ -1777,246 +1821,62 @@ function exportData() {
   logChange("Data exported", {});
 }
 
-/* ========= SMALL HELPERS ========= */
+/* ========= CALENDAR (ADDED) ========= */
+function renderCalendar() {
+  const grid = $("calendar-grid");
+  if (!grid) return;
+  grid.innerHTML = "";
+  
+  // Simple week view based on calAnchor (default today)
+  const startOfWeek = new Date(calAnchor);
+  const day = startOfWeek.getDay() || 7; // Get current day number, converting Sun (0) to 7
+  if (day !== 1) startOfWeek.setHours(-24 * (day - 1)); // Go back to Monday
 
-function timeOverlaps(time1, time2) {
-  if (!time1 || !time2) return false;
-  // Expect "HH:MM-HH:MM"
-  const [s1, e1] = time1.split("-").map(t => parseInt(t.replace(":", ""), 10));
-  const [s2, e2] = time2.split("-").map(t => parseInt(t.replace(":", ""), 10));
-  return !(e1 <= s2 || e2 <= s1);
-}
-
-/* ========= STATE MANAGEMENT ========= */
-
-function saveState() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
-  } catch (e) {
-    console.error("Failed to save state:", e);
-  }
-}
-
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
-    const parsed = JSON.parse(raw);
-
-    // Shallow merge to keep current structure
-    Object.assign(appState, parsed);
-
-    // Ensure arrays exist on trucks
-    appState.truckloads.forEach(t => {
-      if (!Array.isArray(t.orders)) t.orders = t.orders ? [...t.orders] : [];
-      if (!Array.isArray(t.stagingLog)) t.stagingLog = [];
-    });
-  } catch (e) {
-    console.error("Failed to load state:", e);
-  }
-}
-
-function logChange(action, details) {
-  appState.changeLog.unshift({
-    id: `log-${Date.now()}`,
-    action,
-    details: details || {},
-    timestamp: new Date().toISOString(),
-    user: appState.session.email || ""
+  const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  days.forEach((d, i) => {
+    const date = new Date(startOfWeek);
+    date.setDate(date.getDate() + i);
+    const isToday = sameDate(date, new Date());
+    
+    const col = document.createElement("div");
+    col.className = `cal-cell ${isToday ? "today" : ""}`;
+    
+    const dateStr = date.toISOString().slice(5, 10); // MM-DD
+    col.innerHTML = `
+      <div class="cal-cell-head">
+        <span>${d}</span>
+        <span style="font-weight:normal;color:#6b7280">${dateStr}</span>
+      </div>
+      <div class="cal-cell-body" id="cal-day-${i}"></div>
+    `;
+    grid.appendChild(col);
   });
 
-  if (appState.changeLog.length > 1000) {
-    appState.changeLog = appState.changeLog.slice(0, 1000);
-  }
-}
+  // Populate Trucks
+  appState.truckloads.forEach(t => {
+    if (!t.pickupDate) return;
+    const tDate = new Date(t.pickupDate);
+    
+    const diffTime = tDate - startOfWeek;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
 
-function checkAlerts() {
-  const alerts = [];
-  const today = new Date(todayYMD());
-
-  const highUnassigned = appState.orders.filter(o =>
-    o.__priority === "HIGH" && !o["Load ID"]
-  );
-
-  if (highUnassigned.length > 0) {
-    alerts.push({
-      id: `alert-high-${Date.now()}`,
-      type: "error",
-      message: `${highUnassigned.length} high priority orders unassigned`,
-      timestamp: new Date().toISOString()
-    });
-  }
-
-  const todaysUnstaged = appState.truckloads.filter(t =>
-    sameDate(t.pickupDate, today) && t.status !== "Fully Staged" && t.status !== "Departed"
-  );
-
-  if (todaysUnstaged.length > 0) {
-    alerts.push({
-      id: `alert-unstaged-${Date.now()}`,
-      type: "warning",
-      message: `${todaysUnstaged.length} trucks for today not fully staged`,
-      timestamp: new Date().toISOString()
-    });
-  }
-
-  const overflow = appState.truckloads.filter(t => t.cartons > MAX_CARTS_PER_TRUCK);
-  if (overflow.length > 0) {
-    alerts.push({
-      id: `alert-overflow-${Date.now()}`,
-      type: "warning",
-      message: `${overflow.length} trucks over carton capacity`,
-      timestamp: new Date().toISOString()
-    });
-  }
-
-  appState.alerts = alerts;
-  updateAlertsBadge();
-}
-
-function updateAlertsBadge() {
-  const badge = $("alerts-badge");
-  const count = $("alerts-count");
-  const n = appState.alerts.length;
-
-  if (!badge || !count) return;
-
-  if (n > 0) {
-    badge.classList.remove("hidden");
-    count.textContent = n;
-  } else {
-    badge.classList.add("hidden");
-  }
-}
-
-/* ========= ASSIGN POs TO EXISTING LOAD ========= */
-
-function assignSelectedPOsToExistingLoad() {
-  const loadId = $("assign-existing-load")?.value;
-  if (!loadId) {
-    alert("Select a truckload first.");
-    return;
-  }
-  const truck = appState.truckloads.find(t => t.loadId === loadId);
-  if (!truck) {
-    alert("Truckload not found.");
-    return;
-  }
-
-  if (!Array.isArray(truck.orders)) truck.orders = [];
-
-  [...selectedPOs].forEach(po => {
-    const o = appState.orders.find(x => (x.PO || x["PO Num"]) === po);
-    if (!o) return;
-    o["Load ID"] = loadId;
-    if (!truck.orders.includes(po)) truck.orders.push(po);
-  });
-
-  truck.units = sumNumber(
-    appState.orders.filter(o => truck.orders.includes(o.PO || o["PO Num"])),
-    "__units"
-  );
-  truck.cartons = sumNumber(
-    appState.orders.filter(o => truck.orders.includes(o.PO || o["PO Num"])),
-    "__cartons"
-  );
-
-  logChange("Assigned POs to load", { loadId, count: selectedPOs.size });
-  saveState();
-  renderAll();
-}
-
-/* ========= OVERRIDES TO MATCH CURRENT HTML (CREATE / EDIT TRUCKLOAD) ========= */
-
-function showCreateTruckModal() {
-  const titleEl = $("modal-overlay")?.querySelector("h3");
-  if (titleEl) titleEl.textContent = "Create Truckload";
-
-  $("tl-load-id").value = "";
-  $("tl-load-type").value = "LTL";
-  $("tl-pickup-date").value = todayYMD();
-  $("tl-pickup-window").value = TIME_BLOCKS[0].window;
-  $("tl-carrier").value = "";
-  $("tl-customer").value = "";
-  $("tl-bol").value = "";
-
-  $("modal-selected-pos").textContent = selectedPOs.size
-    ? `Selected POs: ${[...selectedPOs].join(", ")}`
-    : "No POs selected. You can still create an empty truck.";
-
-  $("modal-overlay").classList.remove("hidden");
-}
-
-function saveTruckload() {
-  let loadId = $("tl-load-id").value.trim();
-  if (!loadId) loadId = `TL-${Date.now()}`;
-
-  let t = appState.truckloads.find(x => x.loadId === loadId);
-  const isNew = !t;
-
-  if (!t) {
-    t = {
-      loadId,
-      orders: [],
-      stagingLog: [],
-      createdAt: new Date().toISOString(),
-      createdBy: appState.session.email,
-      status: "Not Started",
-      cartons: 0,
-      units: 0
-    };
-    appState.truckloads.push(t);
-  }
-
-  t.loadId = loadId;
-  t.loadType = $("tl-load-type").value;
-  t.pickupDate = $("tl-pickup-date").value;
-  t.pickupWindow = $("tl-pickup-window").value;
-  t.carrier = $("tl-carrier").value.trim();
-  t.customer = $("tl-customer").value.trim();
-  t.bol = $("tl-bol").value.trim();
-  // master BOL, units, cartons are derived from orders
-
-  // Attach selected POs (if any)
-  if (!Array.isArray(t.orders)) t.orders = [];
-  const newlyAdded = [];
-
-  [...selectedPOs].forEach(po => {
-    const o = appState.orders.find(x => (x.PO || x["PO Num"]) === po);
-    if (!o) return;
-    o["Load ID"] = loadId;
-    if (!t.orders.includes(po)) {
-      t.orders.push(po);
-      newlyAdded.push(po);
+    if (diffDays >= 0 && diffDays < 7) {
+        const container = document.getElementById(`cal-day-${diffDays}`);
+        if (container) {
+            const chip = document.createElement("div");
+            chip.className = `cal-chip ${t.status === 'Departed' ? 'departed' : ''}`;
+            chip.innerHTML = `
+                <strong>${t.loadId}</strong>
+                <br>${(t.customer || "").substring(0,10)}
+            `;
+            chip.onclick = () => showTruckDetailModal(t.loadId);
+            container.appendChild(chip);
+        }
     }
   });
-
-  t.units = sumNumber(
-    appState.orders.filter(o => t.orders.includes(o.PO || o["PO Num"])),
-    "__units"
-  );
-  t.cartons = sumNumber(
-    appState.orders.filter(o => t.orders.includes(o.PO || o["PO Num"])),
-    "__cartons"
-  );
-
-  if (!Array.isArray(t.stagingLog)) t.stagingLog = [];
-  t.stagingLog.push({
-    ts: new Date().toISOString(),
-    action: isNew ? "Created" : "Edited",
-    user: appState.session.email,
-    note: newlyAdded.length ? `Added POs: ${newlyAdded.join(", ")}` : ""
-  });
-
-  logChange(isNew ? "Truckload created" : "Truckload updated", {
-    loadId,
-    pos: t.orders.length
-  });
-
-  selectedPOs.clear();
-  $("modal-overlay").classList.add("hidden");
-  saveState();
-  renderAll();
+  
+  const title = $("cal-title");
+  if(title) title.textContent = `Week of ${startOfWeek.toLocaleDateString()}`;
 }
 
 /* ========= RENDER ALL ========= */
@@ -2029,6 +1889,7 @@ function renderAll() {
   renderHistory();
   renderMetrics();
   renderDiscrepancies();
+  renderCalendar();
   updateAssignDropdown();
   checkAlerts();
 }
@@ -2037,6 +1898,29 @@ function renderAll() {
 
 function init() {
   loadState();
+
+  // Add Mobile Menu Button dynamically if missing
+  const topBarLeft = document.querySelector(".top-bar-left");
+  if (topBarLeft && !document.querySelector(".mobile-menu-btn")) {
+    const btn = document.createElement("button");
+    btn.className = "mobile-menu-btn";
+    btn.innerHTML = "☰";
+    btn.onclick = () => {
+      document.querySelector(".sidebar").classList.toggle("open");
+      let overlay = document.querySelector(".sidebar-overlay");
+      if(!overlay) {
+        overlay = document.createElement("div");
+        overlay.className = "sidebar-overlay";
+        overlay.onclick = () => {
+            document.querySelector(".sidebar").classList.remove("open");
+            overlay.classList.remove("show");
+        };
+        document.body.appendChild(overlay);
+      }
+      overlay.classList.toggle("show");
+    };
+    topBarLeft.insertBefore(btn, topBarLeft.firstChild);
+  }
 
   if (appState.session?.authed) {
     $("login-screen").classList.add("hidden");
@@ -2054,7 +1938,11 @@ function init() {
 
   // Orders
   $("orders-csv").onchange = handleCSVUpload;
-  $("orders-search").oninput = renderOrders;
+  let searchTimeout;
+  $("orders-search").oninput = () => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(renderOrders, 300);
+  };
   $("select-all-orders").onchange = e => {
     const checked = e.target.checked;
     document.querySelectorAll("#orders-body .po-check").forEach(chk => {
@@ -2071,14 +1959,9 @@ function init() {
 
   // Dock
   $("dock-search").oninput = renderDock;
-  $("dock-clear").onclick = () => {
-    $("dock-search").value = "";
-    renderDock();
-  };
-  $("dock-history-close").onclick = () =>
-    $("dock-history-overlay").classList.add("hidden");
-  $("dock-map-close").onclick = () =>
-    $("dock-map-overlay").classList.add("hidden");
+  $("dock-clear").onclick = () => { $("dock-search").value = ""; renderDock(); };
+  $("dock-history-close").onclick = () => $("dock-history-overlay").classList.add("hidden");
+  $("dock-map-close").onclick = () => $("dock-map-overlay").classList.add("hidden");
 
   // Today
   $("todays-clear")?.addEventListener("click", () => {
@@ -2092,10 +1975,7 @@ function init() {
 
   // Truckloads
   $("truckloads-search").oninput = renderTruckloads;
-  $("truckloads-clear").onclick = () => {
-    $("truckloads-search").value = "";
-    renderTruckloads();
-  };
+  $("truckloads-clear").onclick = () => { $("truckloads-search").value = ""; renderTruckloads(); };
   $("select-all-trucks").onchange = e => {
     const checked = e.target.checked;
     document.querySelectorAll(".truck-check").forEach(chk => {
@@ -2107,49 +1987,37 @@ function init() {
   };
   $("bulk-edit-btn").onclick = showBulkEditModal;
   $("bulk-apply").onclick = applyBulkEdit;
-  $("bulk-cancel").onclick = () =>
-    $("bulk-edit-overlay").classList.add("hidden");
+  $("bulk-cancel").onclick = () => $("bulk-edit-overlay").classList.add("hidden");
 
   // History
   $("history-search").oninput = renderHistory;
-  $("history-clear").onclick = () => {
-    $("history-search").value = "";
-    renderHistory();
-  };
+  $("history-clear").onclick = () => { $("history-search").value = ""; renderHistory(); };
 
   // Discrepancies
   $("disc-search").oninput = renderDiscrepancies;
-  $("disc-clear").onclick = () => {
-    $("disc-search").value = "";
-    renderDiscrepancies();
-  };
+  $("disc-clear").onclick = () => { $("disc-search").value = ""; renderDiscrepancies(); };
+
+  // Calendar
+  $("cal-prev").onclick = () => { calAnchor.setDate(calAnchor.getDate() - 7); renderCalendar(); };
+  $("cal-next").onclick = () => { calAnchor.setDate(calAnchor.getDate() + 7); renderCalendar(); };
+  $("cal-today").onclick = () => { calAnchor = new Date(); renderCalendar(); };
 
   // Modals
   $("tl-save").onclick = saveTruckload;
-  $("tl-cancel").onclick = () =>
-    $("modal-overlay").classList.add("hidden");
+  $("tl-cancel").onclick = () => $("modal-overlay").classList.add("hidden");
 
-  $("tl-detail-save").onclick = () => {
-    // existing detail-save logic from earlier parts still applies
-    // (we filled ed-* fields in showTruckDetail)
-  };
-  $("tl-detail-close").onclick = () =>
-    $("tl-detail-overlay").classList.add("hidden");
+  $("tl-detail-save").onclick = saveTruckDetail;
+  $("tl-detail-close").onclick = () => $("tl-detail-overlay").classList.add("hidden");
 
   $("auto-confirm").onclick = confirmAutoRoute;
-  $("auto-cancel").onclick = () =>
-    $("auto-overlay").classList.add("hidden");
+  $("auto-cancel").onclick = () => $("auto-overlay").classList.add("hidden");
   $("auto-select-all").onchange = e => {
     const checked = e.target.checked;
-    document.querySelectorAll(".auto-check").forEach(chk => {
-      chk.checked = checked;
-    });
+    document.querySelectorAll(".auto-check").forEach(chk => { chk.checked = checked; });
   };
 
-  $("alerts-close").onclick = () =>
-    $("alerts-overlay").classList.add("hidden");
-  $("changelog-close").onclick = () =>
-    $("changelog-overlay").classList.add("hidden");
+  $("alerts-close").onclick = () => $("alerts-overlay").classList.add("hidden");
+  $("changelog-close").onclick = () => $("changelog-overlay").classList.add("hidden");
 
   $("undo-btn").onclick = () => alert("Undo feature coming soon");
   $("changelog-btn").onclick = showChangelogModal;
@@ -2174,12 +2042,7 @@ function init() {
 
 // Node export guard (for tests, optional)
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = {
-    appState,
-    renderAll,
-    handleCSVUpload,
-    init
-  };
+  module.exports = { appState, renderAll, handleCSVUpload, init };
 }
 
 // Start the app
