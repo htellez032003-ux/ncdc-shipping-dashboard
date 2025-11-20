@@ -1,5 +1,5 @@
 // NCDC Shipping Dashboard - script.js
-// Fully merged & cleaned
+// Fully merged & cleaned - Includes author mapping & filter fixes
 
 /* ========= CONSTANTS ========= */
 const STORAGE_KEY = "ncdcShippingState_VLT10";
@@ -331,6 +331,7 @@ function parseCSV(text) {
 function normalizeOrder(o) {
   const po = o.PO || o["PO Num"] || "";
   const customer = o.Customer || o["Cust Name"] || "";
+  const customerName = o["Cust Name"] || ""; // Capture the full name
   const carrier = o.Carrier || o.Shipper || "";
   const bol = o.BOL || o["BOL#"] || "";
   const masterBol = o["Master BOL"] || o["Master BOL#"] || "";
@@ -355,6 +356,7 @@ function normalizeOrder(o) {
     ...o,
     PO: po,
     Customer: customer,
+    "Cust Name": customerName, // Add key for full name
     Carrier: carrier,
     BOL: bol,
     "Master BOL": masterBol,
@@ -367,6 +369,7 @@ function normalizeOrder(o) {
     "Ready Time": readyTime
   };
 
+  // Map Author# to Load ID if missing
   if (!order["Load ID"] && authorLoadId) {
     order["Load ID"] = authorLoadId;
   }
@@ -374,9 +377,17 @@ function normalizeOrder(o) {
   order.__units = units;
   order.__cartons = cartons;
 
-  const start = parseYMD(startDate);
-  const cancel = parseYMD(cancelDate);
-  const ready = parseYMD(readyDate);
+  // Date Parsing helper (handles 11/7/2025 style)
+  const parseUSDate = (str) => {
+    if(!str) return null;
+    const parts = str.split("/");
+    if(parts.length === 3) return new Date(parts[2], parts[0]-1, parts[1]);
+    return new Date(str);
+  };
+
+  const start = parseUSDate(startDate);
+  const cancel = parseUSDate(cancelDate);
+  const ready = parseUSDate(readyDate);
 
   let shipBy = ready || start || cancel || new Date(todayYMD());
   order.__shipBy = ymd(shipBy);
@@ -494,9 +505,15 @@ function handleCSVUpload(e) {
     const rows = parseCSV(text);
     mergeOrdersFromCSV(rows);
     rebuildTruckloadsFromOrders();
+    
     $("csv-updated").textContent = "CSV updated: " + new Date().toLocaleString();
     logChange("CSV Uploaded", { rows: rows.length });
+    
     saveState();
+    
+    // Force update of filters now that data exists
+    initOrdersFilters();
+    
     renderAll();
     checkAlerts();
   };
@@ -508,19 +525,24 @@ function handleCSVUpload(e) {
 function initOrdersFilters() {
   const colSel = $("orders-col-filter");
   if (!colSel) return;
+  
   colSel.innerHTML = "";
   const cols = new Set();
 
-  if (appState.orders[0]) {
+  // Use first order to find keys if available
+  if (appState.orders.length > 0) {
     Object.keys(appState.orders[0]).forEach(k => {
-      if (k.startsWith("__")) return;
-      cols.add(k);
+      if (!k.startsWith("__")) {
+        cols.add(k);
+      }
     });
   } else {
-    ["PO", "Customer", "Carrier", "BOL", "Master BOL", "Start Date", "Cancel Date", "Ready Date", "Load ID"].forEach(c => cols.add(c));
+    ["PO", "Customer", "Cust Name", "Carrier", "BOL", "Master BOL", "Start Date", "Cancel Date", "Load ID"].forEach(c => cols.add(c));
   }
 
-  cols.forEach(c => {
+  const sortedCols = Array.from(cols).sort();
+
+  sortedCols.forEach(c => {
     const opt = document.createElement("option");
     opt.value = c;
     opt.textContent = c;
@@ -651,9 +673,9 @@ function renderOrders() {
       );
       if (!ok) return false;
     }
-    // dynamic filters
+    // dynamic filters - Trim strings for safety
     for (const f of dynamicFilters) {
-      if (String(o[f.col] || "") !== f.value) return false;
+      if (String(o[f.col] || "").trim() !== f.value) return false;
     }
     return true;
   });
@@ -676,12 +698,13 @@ function renderOrders() {
         <input type="checkbox" class="po-check" data-po="${po}" ${selectedPOs.has(po) ? "checked" : ""}>
       </td>
       <td>${po}</td>
-      <td>${o.Customer || o["Cust Name"] || ""}</td>
-      <td>${o.Carrier || o.Shipper || ""}${spsBadge}</td>
-      <td>${o.Units != null ? o.Units : o["TTL QTY"] || ""}</td>
-      <td>${o.Cartons != null ? o.Cartons : o["Packed Cartons"] || ""}</td>
-      <td>${o.BOL || o["BOL#"] || ""}</td>
-      <td>${o["Master BOL"] || o["Master BOL#"] || ""}</td>
+      <td>${o.Customer || ""}</td>
+      <td><strong>${o["Cust Name"] || ""}</strong></td>
+      <td>${o.Carrier || ""}${spsBadge}</td>
+      <td>${o.Units != null ? o.Units : ""}</td>
+      <td>${o.Cartons != null ? o.Cartons : ""}</td>
+      <td>${o.BOL || ""}</td>
+      <td>${o["Master BOL"] || ""}</td>
       <td>${o["Start Date"] || ""}</td>
       <td>${o["Cancel Date"] || ""}</td>
       <td>${priorityBadge}</td>
@@ -723,12 +746,13 @@ function renderOrdersFiltered(list) {
         <input type="checkbox" class="po-check" data-po="${po}" ${selectedPOs.has(po) ? "checked" : ""}>
       </td>
       <td>${po}</td>
-      <td>${o.Customer || o["Cust Name"] || ""}</td>
-      <td>${o.Carrier || o.Shipper || ""}${spsBadge}</td>
-      <td>${o.Units != null ? o.Units : o["TTL QTY"] || ""}</td>
-      <td>${o.Cartons != null ? o.Cartons : o["Packed Cartons"] || ""}</td>
-      <td>${o.BOL || o["BOL#"] || ""}</td>
-      <td>${o["Master BOL"] || o["Master BOL#"] || ""}</td>
+      <td>${o.Customer || ""}</td>
+      <td><strong>${o["Cust Name"] || ""}</strong></td>
+      <td>${o.Carrier || ""}${spsBadge}</td>
+      <td>${o.Units != null ? o.Units : ""}</td>
+      <td>${o.Cartons != null ? o.Cartons : ""}</td>
+      <td>${o.BOL || ""}</td>
+      <td>${o["Master BOL"] || ""}</td>
       <td>${o["Start Date"] || ""}</td>
       <td>${o["Cancel Date"] || ""}</td>
       <td>${priorityBadge}</td>
@@ -1821,7 +1845,7 @@ function exportData() {
   logChange("Data exported", {});
 }
 
-/* ========= CALENDAR (ADDED) ========= */
+/* ========= CALENDAR ========= */
 function renderCalendar() {
   const grid = $("calendar-grid");
   if (!grid) return;
