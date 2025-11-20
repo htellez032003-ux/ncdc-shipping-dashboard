@@ -1,5 +1,5 @@
 // NCDC Shipping Dashboard - script.js
-// Fully merged & cleaned - Includes author mapping & filter fixes
+// Version: Final Fix - Includes 'Cust Name' and 'Author#' mapping
 
 /* ========= CONSTANTS ========= */
 const STORAGE_KEY = "ncdcShippingState_VLT10";
@@ -2070,4 +2070,7 @@ if (typeof module !== "undefined" && module.exports) {
 }
 
 // Start the app
-document.addEventListener("DOMContentLoaded", init);
+document.addEventListener("DOMContentLoaded", () => {
+  console.log("Script loaded successfully");
+  init();
+});
