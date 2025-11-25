@@ -1,5 +1,5 @@
 // NCDC Shipping Dashboard - script.js
-// Version: Final Fix - Includes 'Cust Name' and 'Author#' mapping
+// Version: Final Stable - Includes Safety Fix for CSV Uploads
 
 /* ========= CONSTANTS ========= */
 const STORAGE_KEY = "ncdcShippingState_VLT10";
@@ -329,34 +329,36 @@ function parseCSV(text) {
 }
 
 function normalizeOrder(o) {
+  // 1. Safe mapping - Force strings to avoid "undefined" errors
   const po = o.PO || o["PO Num"] || "";
-  const customer = o.Customer || o["Cust Name"] || "";
-  const customerName = o["Cust Name"] || ""; // Capture the full name
+  const customerCode = o.Customer || ""; 
+  const customerName = o["Cust Name"] || ""; 
   const carrier = o.Carrier || o.Shipper || "";
   const bol = o.BOL || o["BOL#"] || "";
   const masterBol = o["Master BOL"] || o["Master BOL#"] || "";
-  const unitsRaw = o.Units || o["TTL QTY"] || "";
-  const cartonsRaw = o.Cartons || o["Packed Cartons"] || o["Est. Cartons"] || "";
-  const weightRaw = o.Weight || o["Total Weight"] || "";
+  
+  // 2. FIX: Safely access Author# (Load ID)
+  // We use ( ... || "") to ensure we never .trim() on undefined
+  const authorLoadId = (o["Author#"] || "").trim(); 
 
-  const cleanNumber = (val) =>
-    parseFloat(String(val || "").replace(/,/g, "")) || 0;
+  // Number cleaning
+  const cleanNumber = (val) => parseFloat(String(val || "").replace(/,/g, "")) || 0;
+  const units = cleanNumber(o.Units || o["TTL QTY"]);
+  const cartons = cleanNumber(o.Cartons || o["Packed Cartons"] || o["Est. Cartons"]);
+  const weight = cleanNumber(o.Weight || o["Total Weight"]);
 
-  const units = cleanNumber(unitsRaw);
-  const cartons = cleanNumber(cartonsRaw);
-  const weight = cleanNumber(weightRaw);
-
+  // Date Strings
   const startDate = o["Start Date"] || "";
   const cancelDate = o["Cancel Date"] || "";
   const readyDate = o["Ready Date"] || "";
   const readyTime = o["Ready Time"] || "";
-  const authorLoadId = o["Author#"] || "";
-
+  
+  // Create the Order Object
   const order = {
-    ...o,
+    ...o, 
     PO: po,
-    Customer: customer,
-    "Cust Name": customerName, // Add key for full name
+    Customer: customerCode,
+    "Cust Name": customerName,
     Carrier: carrier,
     BOL: bol,
     "Master BOL": masterBol,
@@ -366,18 +368,15 @@ function normalizeOrder(o) {
     "Start Date": startDate,
     "Cancel Date": cancelDate,
     "Ready Date": readyDate,
-    "Ready Time": readyTime
+    "Ready Time": readyTime,
+    "Load ID": o["Load ID"] || authorLoadId // Use existing or map from Author#
   };
 
-  // Map Author# to Load ID if missing
-  if (!order["Load ID"] && authorLoadId) {
-    order["Load ID"] = authorLoadId;
-  }
-
+  // Derived fields
   order.__units = units;
   order.__cartons = cartons;
 
-  // Date Parsing helper (handles 11/7/2025 style)
+  // Date Parsing
   const parseUSDate = (str) => {
     if(!str) return null;
     const parts = str.split("/");
@@ -388,8 +387,10 @@ function normalizeOrder(o) {
   const start = parseUSDate(startDate);
   const cancel = parseUSDate(cancelDate);
   const ready = parseUSDate(readyDate);
+  const today = new Date(todayYMD());
 
-  let shipBy = ready || start || cancel || new Date(todayYMD());
+  // Priority Logic
+  let shipBy = ready || start || cancel || today;
   order.__shipBy = ymd(shipBy);
 
   if (cancel && shipBy > cancel) {
@@ -398,13 +399,12 @@ function normalizeOrder(o) {
     order.__recommendedShip = order.__shipBy;
   }
 
-  const today = new Date(todayYMD());
   const sb = parseYMD(order.__shipBy);
   if (sb <= today) order.__priority = "HIGH";
   else if (sb <= addDays(today, 1)) order.__priority = "MEDIUM";
   else order.__priority = "LOW";
 
-  order.__isSPS = isSPSCarrier(carrier || o.Shipper);
+  order.__isSPS = isSPSCarrier(carrier);
 
   return order;
 }
